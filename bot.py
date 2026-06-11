@@ -326,6 +326,7 @@ def year_keyboard(rows: list[dict]) -> InlineKeyboardMarkup:
         count = len(rows_for_year(rows, year))
         buttons.append([InlineKeyboardButton(f"{year}-{year + 1} ({count})", callback_data=f"year:{year}")])
     buttons.append([InlineKeyboardButton("Tất cả môn", callback_data="all")])
+    buttons.append([InlineKeyboardButton("Quay lại", callback_data="close_menu")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -382,7 +383,7 @@ def gpa_menu_keyboard(records: list[dict]) -> InlineKeyboardMarkup:
     for year in available_gpa_years(records):
         count = len(gpa_records_for_year(records, year))
         buttons.append([InlineKeyboardButton(f"{year}-{year + 1} ({count} học kỳ)", callback_data=f"gpa:year:{year}")])
-    buttons.append([InlineKeyboardButton("Quay lại", callback_data="back:years")])
+    buttons.append([InlineKeyboardButton("Quay lại", callback_data="close_menu")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -417,18 +418,10 @@ def settings_text(user_id: str) -> str:
     )
 
 
-def is_logged_in(user_id: str) -> bool:
-    try:
-        return get_existing_login_status(user_id) in {"valid", "refreshed"}
-    except Exception:
-        return False
-
-
 def settings_keyboard(user_id: str) -> InlineKeyboardMarkup:
     settings = get_user_settings(user_id)
     toggle_label = "Tắt auto-delete" if settings["auto_delete_enabled"] else "Bật auto-delete"
     notif_label = "Tắt thông báo điểm" if settings["score_notifications_enabled"] else "Bật thông báo điểm"
-    back_callback = "back:years" if is_logged_in(user_id) else "close_menu"
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton(toggle_label, callback_data="setting:toggle")],
@@ -443,7 +436,7 @@ def settings_keyboard(user_id: str) -> InlineKeyboardMarkup:
             ],
             [InlineKeyboardButton("Nhập số giây", callback_data="setting:custom")],
             [InlineKeyboardButton(notif_label, callback_data="setting:notif_toggle")],
-            [InlineKeyboardButton("Quay lại", callback_data=back_callback)],
+            [InlineKeyboardButton("Quay lại", callback_data="close_menu")],
         ]
     )
 
