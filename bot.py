@@ -349,10 +349,15 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton("📊 Tra cứu điểm", callback_data="menu:check")],
             [InlineKeyboardButton("📈 Xem GPA", callback_data="menu:gpa")],
             [InlineKeyboardButton("📅 Lịch học & Thi", callback_data="menu:schedule")],
+            [InlineKeyboardButton("👤 Thông tin cá nhân", callback_data="menu:info")],
             [InlineKeyboardButton("⚙️ Cài đặt", callback_data="menu:setting")],
             [InlineKeyboardButton("🚪 Đăng xuất", callback_data="menu:logout")],
         ]
     )
+
+
+def info_back_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Quay lại", callback_data="menu:main")]])
 
 
 def schedule_menu_keyboard() -> InlineKeyboardMarkup:
@@ -379,13 +384,13 @@ def format_schedules_day(rows: list[dict], date_label: str) -> str:
         mon = row.get("TenMonHoc", "Không rõ")
         tiet = f"{row.get('TuTiet')}-{row.get('DenTiet')}"
         phong = row.get("TenPhong", "-").strip()
+        phong = phong.replace("Phòng học/", "")
         ca = row.get("CaHoc", "-")
         gv = row.get("TenGiangVien", "-")
         lines.append(
             f"<b>{idx}. {mon}</b>\n"
-            f"  • Tiết: {tiet} ({ca})\n"
-            f"  • Phòng: {phong}\n"
-            f"  • GV: {gv}"
+            f"- Tiết: {tiet} ({ca}) | Phòng: {phong}\n"
+            f"- GV: {gv}"
         )
     return "\n\n".join(lines)
 
@@ -416,6 +421,7 @@ def format_schedules_week(rows: list[dict], start_date: str, end_date: str) -> s
         mon = row.get("TenMonHoc", "Không rõ")
         tiet = f"{row.get('TuTiet')}-{row.get('DenTiet')}"
         phong = row.get("TenPhong", "-").strip()
+        phong = phong.replace("Phòng học/", "")
         ca = row.get("CaHoc", "-")
         lines.append(
             f"  • <b>{mon}</b>\n"
@@ -461,14 +467,14 @@ def format_exam_schedule(rows: list[dict], today_str: str) -> str:
             ca = row.get("TC_SV_KetQuaHocTap_LichThiSinhVien_CaThi", "-")
             tiet = row.get("TC_SV_KetQuaHocTap_LichThiSinhVien_TuTietDenTiet", "-")
             phong = row.get("TC_SV_KetQuaHocTap_LichThiSinhVien_TenPhong", "-").strip()
+            phong = phong.replace("Phòng học/", "")
             loai = row.get("TC_SV_KetQuaHocTap_LichThiSinhVien_LoaiThi", "-")
             
             lines.append(
                 f"<b>{idx}. {mon}</b>\n"
-                f"  • Ngày: {beauty_date} ({thu_str})\n"
-                f"  • Giờ/Tiết: Tiết {tiet} ({ca})\n"
-                f"  • Phòng: {phong}\n"
-                f"  • Hình thức/Đợt: {loai}"
+                f"- Ngày: {beauty_date} ({thu_str})\n"
+                f"- Ca: Tiết {tiet} ({ca}) | Phòng: {phong}\n"
+                f"- Hình thức: {loai}"
             )
     else:
         lines.append("📝 <b>LỊCH THI SẮP TỚI</b>\nBạn không có lịch thi nào sắp tới! 🎉")
@@ -871,7 +877,7 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     formatted = format_student_profile(profile)
-    await send_or_edit_html(update, formatted)
+    await send_or_edit_html(update, formatted, reply_markup=info_back_keyboard())
 
 
 async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1100,6 +1106,23 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 "Chọn tính năng xem lịch học hoặc lịch thi dưới đây:",
                 reply_markup=schedule_menu_keyboard(),
             )
+            return
+
+        if data == "menu:info":
+            try:
+                profile = await asyncio.to_thread(get_student_profile, user_id)
+            except KeyError:
+                await prompt_login_credentials(update, user_id)
+                return
+            except Exception as exc:
+                logger.exception("Get profile failed")
+                await query.answer(text="Không lấy được thông tin!")
+                await send_or_edit_text(update, f"Không lấy được thông tin sinh viên: {exc}", reply_markup=info_back_keyboard())
+                return
+
+            await query.answer()
+            formatted = format_student_profile(profile)
+            await send_or_edit_html(update, formatted, reply_markup=info_back_keyboard())
             return
 
         if data == "menu:setting":
