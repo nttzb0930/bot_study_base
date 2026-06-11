@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from bot import (
     start,
     login_command,
+    logout_command,
     check_command,
     gpa_command,
     setting_command,
@@ -34,6 +35,7 @@ async def webhook_post_init(application) -> None:
             BotCommand("check", "Xem điểm"),
             BotCommand("gpa", "Xem GPA"),
             BotCommand("setting", "Cài đặt bot"),
+            BotCommand("logout", "Đăng xuất tài khoản"),
         ]
     )
 
@@ -43,6 +45,7 @@ telegram_app = ApplicationBuilder().token(bot_token).post_init(webhook_post_init
 # Register handlers
 telegram_app.add_handler(CommandHandler("start", start))
 telegram_app.add_handler(CommandHandler("login", login_command))
+telegram_app.add_handler(CommandHandler("logout", logout_command))
 telegram_app.add_handler(CommandHandler("check", check_command))
 telegram_app.add_handler(CommandHandler("gpa", gpa_command))
 telegram_app.add_handler(CommandHandler("setting", setting_command))

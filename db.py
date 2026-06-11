@@ -73,6 +73,27 @@ def save_tokens(tokens: dict) -> None:
         encoding="utf-8",
     )
 
+def delete_user_login(telegram_user_id: str) -> None:
+    if db is not None:
+        try:
+            users_col = db["users"]
+            users_col.delete_one({"telegram_user_id": str(telegram_user_id)})
+        except Exception as e:
+            print(f"MongoDB delete_user_login error: {e}")
+            
+    try:
+        if TOKEN_FILE.exists():
+            content = TOKEN_FILE.read_text(encoding="utf-8").strip()
+            tokens = json.loads(content) if content else {}
+            if str(telegram_user_id) in tokens:
+                tokens.pop(str(telegram_user_id))
+                TOKEN_FILE.write_text(
+                    json.dumps(tokens, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+    except Exception as e:
+        print(f"Local file delete_user_login error: {e}")
+
 def load_user_settings() -> dict:
     if db is not None:
         try:

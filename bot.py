@@ -20,7 +20,7 @@ from telegram.ext import (
 
 from check_scores import format_gpa_summary_table, format_score_row_detail_table, get_gpa_records, get_scores
 from login import get_existing_login_status, login as uneti_login, save_login
-from db import load_user_settings, save_user_settings
+from db import load_user_settings, save_user_settings, delete_user_login
 
 
 logging.basicConfig(
@@ -50,6 +50,10 @@ def get_check_context(user_id: str) -> dict:
         USER_CHECK_CONTEXT.pop(user_id, None)
         return {}
     return data
+
+
+def clear_check_context(user_id: str) -> None:
+    USER_CHECK_CONTEXT.pop(user_id, None)
 
 
 def set_login_context(user_id: str) -> None:
@@ -557,6 +561,22 @@ async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await perform_login(update, context.args[0].strip(), " ".join(context.args[1:]).strip(), user_id)
 
 
+async def logout_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_user:
+        return
+
+    user_id = str(update.effective_user.id)
+    try:
+        await asyncio.to_thread(delete_user_login, user_id)
+        clear_login_context(user_id)
+        clear_check_context(user_id)
+        clear_setting_context(user_id)
+        await send_long_message(update, "Đăng xuất thành công. Thông tin đăng nhập của bạn đã được xóa.")
+    except Exception as exc:
+        logger.exception("Logout failed")
+        await send_long_message(update, f"Đăng xuất thất bại: {exc}")
+
+
 async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user:
         return
@@ -959,6 +979,7 @@ async def post_init(application) -> None:
             BotCommand("check", "Xem điểm"),
             BotCommand("gpa", "Xem GPA"),
             BotCommand("setting", "Cài đặt bot"),
+            BotCommand("logout", "Đăng xuất tài khoản"),
         ]
     )
     asyncio.create_task(start_health_check_server())
@@ -973,6 +994,7 @@ def main() -> None:
     app = ApplicationBuilder().token(bot_token).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("login", login_command))
+    app.add_handler(CommandHandler("logout", logout_command))
     app.add_handler(CommandHandler("check", check_command))
     app.add_handler(CommandHandler("gpa", gpa_command))
     app.add_handler(CommandHandler("setting", setting_command))
