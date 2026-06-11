@@ -576,10 +576,20 @@ def subjects_keyboard(rows: list[dict], year: int | None = None) -> InlineKeyboa
     for index, row in enumerate(rows, start=1):
         score = final_score(row)
         score_text = "-" if score is None else str(score)
+        
+        if score is None:
+            emoji = "⚪"
+        elif score >= 8.0:
+            emoji = "🟢"
+        elif score >= 5.0:
+            emoji = "🟡"
+        else:
+            emoji = "🔴"
+            
         buttons.append(
             [
                 InlineKeyboardButton(
-                    f"{index}. {truncate(subject_name(row), 28)} | TK {score_text}",
+                    f"{emoji} {index}. {truncate(subject_name(row), 24)} | TK {score_text}",
                     callback_data=f"subject:{score_id(row)}",
                 )
             ]
