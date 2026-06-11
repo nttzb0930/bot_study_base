@@ -92,6 +92,12 @@ def clear_setting_context(user_id: str) -> None:
     USER_SETTING_CONTEXT.pop(user_id, None)
 
 
+def clear_all_contexts(user_id: str) -> None:
+    clear_login_context(user_id)
+    clear_check_context(user_id)
+    clear_setting_context(user_id)
+
+
 def is_reply_to_message(update: Update, message_id: int | None) -> bool:
     if not update.message or not update.message.reply_to_message or message_id is None:
         return False
@@ -523,6 +529,8 @@ async def perform_login(update: Update, username: str, password: str, telegram_u
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user:
+        clear_all_contexts(str(update.effective_user.id))
     text = "\n".join(
         [
             "Lệnh dùng:",
@@ -541,6 +549,7 @@ async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     user_id = str(update.effective_user.id)
+    clear_all_contexts(user_id)
     try:
         status = await asyncio.to_thread(get_existing_login_status, user_id)
     except Exception:
@@ -566,11 +575,9 @@ async def logout_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     user_id = str(update.effective_user.id)
+    clear_all_contexts(user_id)
     try:
         await asyncio.to_thread(delete_user_login, user_id)
-        clear_login_context(user_id)
-        clear_check_context(user_id)
-        clear_setting_context(user_id)
         await send_long_message(update, "Đăng xuất thành công. Thông tin đăng nhập của bạn đã được xóa.")
     except Exception as exc:
         logger.exception("Logout failed")
@@ -582,6 +589,7 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     user_id = str(update.effective_user.id)
+    clear_all_contexts(user_id)
     try:
         rows = await asyncio.to_thread(get_scores, user_id)
     except KeyError:
@@ -671,6 +679,7 @@ async def gpa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     user_id = str(update.effective_user.id)
+    clear_all_contexts(user_id)
     try:
         records = await asyncio.to_thread(get_gpa_records, user_id)
     except KeyError:
@@ -704,6 +713,7 @@ async def setting_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     user_id = str(update.effective_user.id)
+    clear_all_contexts(user_id)
     await send_or_edit_text(update, settings_text(user_id), reply_markup=settings_keyboard(user_id))
 
 
@@ -714,6 +724,20 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     user_id = str(update.effective_user.id)
     data = query.data or ""
+
+    if data.startswith("setting:"):
+        clear_login_context(user_id)
+        clear_check_context(user_id)
+    elif data.startswith("gpa:"):
+        clear_login_context(user_id)
+        clear_check_context(user_id)
+        clear_setting_context(user_id)
+    elif any(
+        data.startswith(p)
+        for p in ["back:years", "all", "year:", "semester:", "subject:", "back:semesters:", "back:subjects"]
+    ):
+        clear_login_context(user_id)
+        clear_setting_context(user_id)
 
     if data.startswith("setting:"):
         if data == "setting:menu":
