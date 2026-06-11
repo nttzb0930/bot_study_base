@@ -117,6 +117,10 @@ def get_user_settings(user_id: str) -> dict:
         "auto_delete_seconds": int(
             user_settings.get("auto_delete_seconds", AUTO_DELETE_MESSAGES_SECONDS)
         ),
+        "score_notifications_enabled": user_settings.get(
+            "score_notifications_enabled",
+            True,
+        ),
     }
 
 
@@ -400,11 +404,13 @@ def settings_text(user_id: str) -> str:
     settings = get_user_settings(user_id)
     status = "Bật" if settings["auto_delete_enabled"] else "Tắt"
     seconds = int(settings["auto_delete_seconds"])
+    notif_status = "Bật" if settings["score_notifications_enabled"] else "Tắt"
     return "\n".join(
         [
             "Cài đặt bot",
             f"Auto xóa message: {status}",
             f"Thời gian xóa: {format_seconds(seconds)}",
+            f"Thông báo điểm mới: {notif_status}",
             "",
             "Chọn nút bên dưới để đổi cài đặt.",
         ]
@@ -421,6 +427,7 @@ def is_logged_in(user_id: str) -> bool:
 def settings_keyboard(user_id: str) -> InlineKeyboardMarkup:
     settings = get_user_settings(user_id)
     toggle_label = "Tắt auto-delete" if settings["auto_delete_enabled"] else "Bật auto-delete"
+    notif_label = "Tắt thông báo điểm" if settings["score_notifications_enabled"] else "Bật thông báo điểm"
     back_callback = "back:years" if is_logged_in(user_id) else "close_menu"
     return InlineKeyboardMarkup(
         [
@@ -435,6 +442,7 @@ def settings_keyboard(user_id: str) -> InlineKeyboardMarkup:
                 InlineKeyboardButton("1 giờ", callback_data="setting:time:3600"),
             ],
             [InlineKeyboardButton("Nhập số giây", callback_data="setting:custom")],
+            [InlineKeyboardButton(notif_label, callback_data="setting:notif_toggle")],
             [InlineKeyboardButton("Quay lại", callback_data=back_callback)],
         ]
     )
@@ -764,6 +772,18 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             status_str = "Bật" if new_enabled else "Tắt"
             await query.answer(text=f"Đã {status_str.lower()} tự động xóa tin nhắn!")
+            await send_or_edit_text(update, settings_text(user_id), reply_markup=settings_keyboard(user_id))
+            return
+
+        if data == "setting:notif_toggle":
+            current = get_user_settings(user_id)
+            new_enabled = not current["score_notifications_enabled"]
+            update_user_settings(
+                user_id,
+                score_notifications_enabled=new_enabled,
+            )
+            status_str = "Bật" if new_enabled else "Tắt"
+            await query.answer(text=f"Đã {status_str.lower()} nhận thông báo điểm mới!")
             await send_or_edit_text(update, settings_text(user_id), reply_markup=settings_keyboard(user_id))
             return
 

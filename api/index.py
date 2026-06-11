@@ -6,7 +6,7 @@ from pathlib import Path
 # Add root folder to path so we can import modules
 sys.path.append(str(Path(__file__).parent.parent))
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, HTTPException
 from telegram import Update, BotCommand
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from dotenv import load_dotenv
@@ -82,3 +82,108 @@ async def webhook(request: Request):
 @app.get("/")
 async def index():
     return {"status": "ok", "message": "Telegram Bot is running"}
+
+
+@app.get("/api/cron")
+async def cron_check_scores(request: Request):
+    cron_secret = os.environ.get("CRON_SECRET")
+    auth_header = request.headers.get("Authorization")
+    if cron_secret and auth_header != f"Bearer {cron_secret}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    await initialize_telegram()
+
+    from db import load_tokens, load_user_scores, save_user_scores
+    from login import get_existing_login_status
+    from check_scores import get_scores
+    from bot import get_user_settings
+
+    tokens = load_tokens()
+    if not tokens:
+        return {"status": "ok", "message": "No users to check"}
+
+    results = []
+
+    for user_id, info in tokens.items():
+        settings = get_user_settings(user_id)
+        if not settings.get("score_notifications_enabled", True):
+            results.append({"user_id": user_id, "status": "skipped_by_settings"})
+            continue
+
+        try:
+            status = await asyncio.to_thread(get_existing_login_status, user_id)
+            if status not in {"valid", "refreshed"}:
+                results.append({"user_id": user_id, "status": "expired_login"})
+                continue
+
+            current_scores = await asyncio.to_thread(get_scores, user_id)
+            old_scores = await asyncio.to_thread(load_user_scores, user_id)
+
+            if not old_scores:
+                await asyncio.to_thread(save_user_scores, user_id, current_scores)
+                results.append({"user_id": user_id, "status": "initialized_scores"})
+                continue
+
+            old_map = {
+                row.get("TC_SV_KetQuaHocTap_MaLopHocPhan"): row 
+                for row in old_scores 
+                if row.get("TC_SV_KetQuaHocTap_MaLopHocPhan")
+            }
+            new_notifications = []
+
+            for row in current_scores:
+                class_id = row.get("TC_SV_KetQuaHocTap_MaLopHocPhan")
+                if not class_id:
+                    continue
+
+                sub_name = row.get("TC_SV_KetQuaHocTap_TenMonHoc") or "Không rõ môn"
+                new_score = row.get("TC_SV_KetQuaHocTap_DiemTongKet")
+
+                if class_id not in old_map:
+                    new_notifications.append({
+                        "subject_name": sub_name,
+                        "old_score": None,
+                        "new_score": new_score,
+                    })
+                else:
+                    old_row = old_map[class_id]
+                    old_score = old_row.get("TC_SV_KetQuaHocTap_DiemTongKet")
+                    if new_score != old_score:
+                        new_notifications.append({
+                            "subject_name": sub_name,
+                            "old_score": old_score,
+                            "new_score": new_score,
+                        })
+
+            if new_notifications:
+                msg_lines = ["<b>📣 CÓ ĐIỂM MỚI TRÊN UNETI!</b>\n"]
+                for notif in new_notifications:
+                    sub = notif["subject_name"]
+                    old_val = "Chưa có" if notif["old_score"] is None else str(notif["old_score"])
+                    new_val = "Chưa có" if notif["new_score"] is None else str(notif["new_score"])
+                    if notif["old_score"] is None:
+                        msg_lines.append(f"• <b>{sub}</b>: <code>{new_val}</code>")
+                    else:
+                        msg_lines.append(f"• <b>{sub}</b>: <code>{old_val}</code> ➔ <code>{new_val}</code>")
+                msg_lines.append("\n<i>Dùng /check để xem chi tiết điểm của bạn.</i>")
+                msg_text = "\n".join(msg_lines)
+
+                await telegram_app.bot.send_message(
+                    chat_id=int(user_id),
+                    text=msg_text,
+                    parse_mode="HTML"
+                )
+                
+                await asyncio.to_thread(save_user_scores, user_id, current_scores)
+                results.append({"user_id": user_id, "status": "notified", "count": len(new_notifications)})
+            else:
+                if len(current_scores) != len(old_scores):
+                    await asyncio.to_thread(save_user_scores, user_id, current_scores)
+                    results.append({"user_id": user_id, "status": "updated_without_notification"})
+                else:
+                    results.append({"user_id": user_id, "status": "no_changes"})
+
+        except Exception as exc:
+            results.append({"user_id": user_id, "status": "error", "error": str(exc)})
+
+    return {"status": "ok", "processed": results}

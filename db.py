@@ -78,6 +78,8 @@ def delete_user_login(telegram_user_id: str) -> None:
         try:
             users_col = db["users"]
             users_col.delete_one({"telegram_user_id": str(telegram_user_id)})
+            scores_col = db["user_scores"]
+            scores_col.delete_one({"telegram_user_id": str(telegram_user_id)})
         except Exception as e:
             print(f"MongoDB delete_user_login error: {e}")
             
@@ -94,6 +96,19 @@ def delete_user_login(telegram_user_id: str) -> None:
     except Exception as e:
         print(f"Local file delete_user_login error: {e}")
 
+    try:
+        if SCORES_FILE.exists():
+            content = SCORES_FILE.read_text(encoding="utf-8").strip()
+            scores_data = json.loads(content) if content else {}
+            if str(telegram_user_id) in scores_data:
+                scores_data.pop(str(telegram_user_id))
+                SCORES_FILE.write_text(
+                    json.dumps(scores_data, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+    except Exception as e:
+        print(f"Local file delete scores error: {e}")
+
 def load_user_settings() -> dict:
     if db is not None:
         try:
@@ -105,6 +120,7 @@ def load_user_settings() -> dict:
                     result[str(user_id)] = {
                         "auto_delete_enabled": doc.get("auto_delete_enabled"),
                         "auto_delete_seconds": doc.get("auto_delete_seconds"),
+                        "score_notifications_enabled": doc.get("score_notifications_enabled"),
                     }
             return result
         except Exception as e:
@@ -130,6 +146,7 @@ def save_user_settings(settings: dict) -> None:
                     {"$set": {
                         "auto_delete_enabled": info.get("auto_delete_enabled"),
                         "auto_delete_seconds": info.get("auto_delete_seconds"),
+                        "score_notifications_enabled": info.get("score_notifications_enabled"),
                     }},
                     upsert=True
                 )
@@ -139,5 +156,55 @@ def save_user_settings(settings: dict) -> None:
 
     SETTINGS_FILE.write_text(
         json.dumps(settings, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+SCORES_FILE = Path(os.getenv("SCORES_FILE", "user_scores.json"))
+
+def load_user_scores(telegram_user_id: str) -> list[dict]:
+    if db is not None:
+        try:
+            scores_col = db["user_scores"]
+            doc = scores_col.find_one({"telegram_user_id": str(telegram_user_id)})
+            if doc:
+                return doc.get("scores", [])
+            return []
+        except Exception as e:
+            print(f"MongoDB load_user_scores error: {e}. Falling back to file.")
+            
+    if not SCORES_FILE.exists():
+        return []
+    content = SCORES_FILE.read_text(encoding="utf-8").strip()
+    if not content:
+        return []
+    try:
+        data = json.loads(content)
+        return data.get(str(telegram_user_id), [])
+    except Exception:
+        return []
+
+def save_user_scores(telegram_user_id: str, scores: list[dict]) -> None:
+    if db is not None:
+        try:
+            scores_col = db["user_scores"]
+            scores_col.update_one(
+                {"telegram_user_id": str(telegram_user_id)},
+                {"$set": {"scores": scores}},
+                upsert=True
+            )
+            return
+        except Exception as e:
+            print(f"MongoDB save_user_scores error: {e}. Falling back to file.")
+
+    data = {}
+    if SCORES_FILE.exists():
+        try:
+            content = SCORES_FILE.read_text(encoding="utf-8").strip()
+            data = json.loads(content) if content else {}
+        except Exception:
+            data = {}
+    data[str(telegram_user_id)] = scores
+    SCORES_FILE.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
