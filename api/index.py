@@ -102,27 +102,22 @@ async def cron_check_scores(request: Request):
     if not tokens:
         return {"status": "ok", "message": "No users to check"}
 
-    results = []
-
-    for user_id, info in tokens.items():
+    async def check_user_cron(user_id: str) -> dict:
         settings = get_user_settings(user_id)
         if not settings.get("score_notifications_enabled", True):
-            results.append({"user_id": user_id, "status": "skipped_by_settings"})
-            continue
+            return {"user_id": user_id, "status": "skipped_by_settings"}
 
         try:
             status = await asyncio.to_thread(get_existing_login_status, user_id)
             if status not in {"valid", "refreshed"}:
-                results.append({"user_id": user_id, "status": "expired_login"})
-                continue
+                return {"user_id": user_id, "status": "expired_login"}
 
             current_scores = await asyncio.to_thread(get_scores, user_id)
             old_scores = await asyncio.to_thread(load_user_scores, user_id)
 
             if not old_scores:
                 await asyncio.to_thread(save_user_scores, user_id, current_scores)
-                results.append({"user_id": user_id, "status": "initialized_scores"})
-                continue
+                return {"user_id": user_id, "status": "initialized_scores"}
 
             old_map = {
                 row.get("TC_SV_KetQuaHocTap_MaLopHocPhan"): row 
@@ -175,15 +170,25 @@ async def cron_check_scores(request: Request):
                 )
                 
                 await asyncio.to_thread(save_user_scores, user_id, current_scores)
-                results.append({"user_id": user_id, "status": "notified", "count": len(new_notifications)})
+                return {"user_id": user_id, "status": "notified", "count": len(new_notifications)}
             else:
                 if len(current_scores) != len(old_scores):
                     await asyncio.to_thread(save_user_scores, user_id, current_scores)
-                    results.append({"user_id": user_id, "status": "updated_without_notification"})
+                    return {"user_id": user_id, "status": "updated_without_notification"}
                 else:
-                    results.append({"user_id": user_id, "status": "no_changes"})
+                    return {"user_id": user_id, "status": "no_changes"}
 
         except Exception as exc:
-            results.append({"user_id": user_id, "status": "error", "error": str(exc)})
+            return {"user_id": user_id, "status": "error", "error": str(exc)}
 
-    return {"status": "ok", "processed": results}
+    tasks = [check_user_cron(uid) for uid in tokens.keys()]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    processed_results = []
+    for r in results:
+        if isinstance(r, Exception):
+            processed_results.append({"status": "exception", "error": str(r)})
+        else:
+            processed_results.append(r)
+
+    return {"status": "ok", "processed": processed_results}
