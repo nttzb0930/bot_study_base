@@ -322,10 +322,7 @@ def year_keyboard(rows: list[dict]) -> InlineKeyboardMarkup:
         count = len(rows_for_year(rows, year))
         buttons.append([InlineKeyboardButton(f"{year}-{year + 1} ({count})", callback_data=f"year:{year}")])
     buttons.append([InlineKeyboardButton("Tất cả môn", callback_data="all")])
-    buttons.append([
-        InlineKeyboardButton("Xem GPA", callback_data="gpa:menu"),
-        InlineKeyboardButton("Cài đặt", callback_data="setting:menu"),
-    ])
+    buttons.append([InlineKeyboardButton("Quay lại", callback_data="close_menu")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -417,9 +414,17 @@ def settings_text(user_id: str) -> str:
     )
 
 
+def is_logged_in(user_id: str) -> bool:
+    try:
+        return get_existing_login_status(user_id) in {"valid", "refreshed"}
+    except Exception:
+        return False
+
+
 def settings_keyboard(user_id: str) -> InlineKeyboardMarkup:
     settings = get_user_settings(user_id)
     toggle_label = "Tắt auto-delete" if settings["auto_delete_enabled"] else "Bật auto-delete"
+    back_callback = "back:years" if is_logged_in(user_id) else "close_menu"
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton(toggle_label, callback_data="setting:toggle")],
@@ -433,7 +438,7 @@ def settings_keyboard(user_id: str) -> InlineKeyboardMarkup:
                 InlineKeyboardButton("1 giờ", callback_data="setting:time:3600"),
             ],
             [InlineKeyboardButton("Nhập số giây", callback_data="setting:custom")],
-            [InlineKeyboardButton("Quay lại", callback_data="back:years")],
+            [InlineKeyboardButton("Quay lại", callback_data=back_callback)],
         ]
     )
 
@@ -738,6 +743,14 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
     ):
         clear_login_context(user_id)
         clear_setting_context(user_id)
+
+    if data == "close_menu":
+        await query.answer()
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        return
 
     if data.startswith("setting:"):
         if data == "setting:menu":
