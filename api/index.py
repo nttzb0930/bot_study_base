@@ -62,6 +62,10 @@ async def initialize_telegram():
     if not is_initialized:
         await telegram_app.initialize()
         await telegram_app.start()
+        try:
+            await webhook_post_init(telegram_app)
+        except Exception as e:
+            print(f"Error running webhook_post_init: {e}")
         is_initialized = True
 
 @app.post("/webhook")
