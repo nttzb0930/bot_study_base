@@ -6,3 +6,4 @@ pymongo
 dnspython
 fastapi
 uvicorn
+certifi

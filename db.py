@@ -8,12 +8,13 @@ db = None
 if MONGODB_URI:
     try:
         from pymongo import MongoClient
-        client = MongoClient(MONGODB_URI)
+        import certifi
+        client = MongoClient(MONGODB_URI, tlsCAFile=certifi.where())
         # Get the default database (specified in URI or falls back to 'telegram_bot')
         db = client.get_default_database("telegram_bot")
         print("Connected to MongoDB successfully.")
     except ImportError:
-        print("pymongo is not installed. Falling back to local JSON storage.")
+        print("pymongo or certifi is not installed. Falling back to local JSON storage.")
         db = None
     except Exception as e:
         print(f"Error connecting to MongoDB: {e}. Falling back to local JSON storage.")
