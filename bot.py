@@ -770,8 +770,7 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
 
         if data == "setting:custom":
-            set_setting_context(user_id, {"stage": "auto_delete_seconds"})
-            await query.answer(text="Nhập số giây bằng cách reply tin nhắn mới...")
+            await query.answer()
             markup = ForceReply(
                 selective=True,
                 input_field_placeholder="Ví dụ: 300",
@@ -779,6 +778,14 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
             message = await query.message.reply_text(
                 "Nhập số giây muốn auto xóa message.\nVí dụ: 300",
                 reply_markup=markup,
+            )
+            set_setting_context(
+                user_id,
+                {
+                    "stage": "auto_delete_seconds",
+                    "prompt_message_id": message.message_id,
+                    "settings_message_id": query.message.message_id,
+                },
             )
             schedule_auto_delete(message, user_id)
             return
@@ -929,6 +936,21 @@ async def text_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     text = (update.message.text or "").strip()
 
     if get_setting_context(user_id):
+        ctx = get_setting_context(user_id)
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+
+        if "prompt_message_id" in ctx:
+            try:
+                await context.bot.delete_message(
+                    chat_id=update.message.chat_id,
+                    message_id=ctx["prompt_message_id"],
+                )
+            except Exception:
+                pass
+
         if not text.isdigit():
             markup = ForceReply(
                 selective=True,
@@ -937,6 +959,13 @@ async def text_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             message = await update.message.reply_text(
                 "Giá trị không hợp lệ. Vui lòng nhập số giây (phải là số nguyên dương).\nVí dụ: 300",
                 reply_markup=markup,
+            )
+            set_setting_context(
+                user_id,
+                {
+                    **ctx,
+                    "prompt_message_id": message.message_id,
+                },
             )
             schedule_auto_delete(message, user_id)
             return
@@ -951,6 +980,13 @@ async def text_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 "Số giây phải lớn hơn hoặc bằng 0. Vui lòng nhập lại:\nVí dụ: 300",
                 reply_markup=markup,
             )
+            set_setting_context(
+                user_id,
+                {
+                    **ctx,
+                    "prompt_message_id": message.message_id,
+                },
+            )
             schedule_auto_delete(message, user_id)
             return
 
@@ -960,6 +996,19 @@ async def text_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             auto_delete_seconds=seconds,
         )
         clear_setting_context(user_id)
+
+        if "settings_message_id" in ctx:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=update.message.chat_id,
+                    message_id=ctx["settings_message_id"],
+                    text=settings_text(user_id),
+                    reply_markup=settings_keyboard(user_id),
+                )
+                return
+            except Exception:
+                pass
+
         await send_or_edit_text(update, settings_text(user_id), reply_markup=settings_keyboard(user_id))
         return
 
