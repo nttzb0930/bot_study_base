@@ -370,6 +370,7 @@ def gpa_menu_keyboard(records: list[dict]) -> InlineKeyboardMarkup:
     for year in available_gpa_years(records):
         count = len(gpa_records_for_year(records, year))
         buttons.append([InlineKeyboardButton(f"{year}-{year + 1} ({count} học kỳ)", callback_data=f"gpa:year:{year}")])
+    buttons.append([InlineKeyboardButton("Quay lại", callback_data="back:years")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -686,17 +687,19 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not query or not update.effective_user:
         return
 
-    await query.answer()
     user_id = str(update.effective_user.id)
     data = query.data or ""
 
     if data.startswith("setting:"):
         if data == "setting:toggle":
             current = get_user_settings(user_id)
+            new_enabled = not current["auto_delete_enabled"]
             update_user_settings(
                 user_id,
-                auto_delete_enabled=not current["auto_delete_enabled"],
+                auto_delete_enabled=new_enabled,
             )
+            status_str = "Bật" if new_enabled else "Tắt"
+            await query.answer(text=f"Đã {status_str.lower()} tự động xóa tin nhắn!")
             await send_or_edit_text(update, settings_text(user_id), reply_markup=settings_keyboard(user_id))
             return
 
@@ -708,17 +711,25 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 auto_delete_seconds=seconds,
             )
             clear_setting_context(user_id)
+            await query.answer(text=f"Đã đổi thời gian xóa thành {format_seconds(seconds)}!")
             await send_or_edit_text(update, settings_text(user_id), reply_markup=settings_keyboard(user_id))
             return
 
         if data == "setting:custom":
             set_setting_context(user_id, {"stage": "auto_delete_seconds"})
-            await send_or_edit_text(
-                update,
-                "Nhập số giây muốn auto xóa message.\nVí dụ: 300",
-                reply_markup=settings_keyboard(user_id),
+            await query.answer(text="Nhập số giây bằng cách reply tin nhắn mới...")
+            markup = ForceReply(
+                selective=True,
+                input_field_placeholder="Ví dụ: 300",
             )
+            message = await query.message.reply_text(
+                "Nhập số giây muốn auto xóa message.\nVí dụ: 300",
+                reply_markup=markup,
+            )
+            schedule_auto_delete(message, user_id)
             return
+    else:
+        await query.answer()
 
     if data.startswith("gpa:"):
         try:
@@ -766,6 +777,38 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if data == "back:years":
         set_check_context(user_id, {"stage": "years"})
         await send_or_edit_text(update, "Chọn năm học:", reply_markup=year_keyboard(rows))
+        return
+
+    if data == "back:subjects":
+        ctx = get_check_context(user_id)
+        year = ctx.get("year")
+        semester = ctx.get("semester")
+        if year is None:
+            set_check_context(user_id, {"stage": "subjects", "year": None, "semester": None})
+            await send_or_edit_html(
+                update,
+                format_score_table(rows, f"Tất cả: {len(rows)} môn"),
+                reply_markup=subjects_keyboard(rows),
+            )
+        elif semester is None:
+            set_check_context(user_id, {"stage": "subjects", "year": year, "semester": None})
+            year_rows = rows_for_year(rows, year)
+            await send_or_edit_html(
+                update,
+                format_score_table(year_rows, f"Năm {year}-{year + 1}: {len(year_rows)} môn"),
+                reply_markup=subjects_keyboard(year_rows, year),
+            )
+        else:
+            set_check_context(user_id, {"stage": "subjects", "year": year, "semester": semester})
+            semester_rows = rows_for_semester(rows, year, semester)
+            await send_or_edit_html(
+                update,
+                format_score_table(
+                    semester_rows,
+                    f"Năm {year}-{year + 1}, học kỳ {semester}: {len(semester_rows)} môn",
+                ),
+                reply_markup=subjects_keyboard(semester_rows, year),
+            )
         return
 
     if data.startswith("back:semesters:"):
@@ -819,7 +862,9 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if not matched_rows:
             await send_or_edit_text(update, "Không tìm thấy môn này.")
             return
-        await send_or_edit_html(update, format_detail_table_html(matched_rows[0]))
+        markup = InlineKeyboardMarkup([[InlineKeyboardButton("Quay lại", callback_data="back:subjects")]])
+        await send_or_edit_html(update, format_detail_table_html(matched_rows[0]), reply_markup=markup)
+        return
 
 
 async def text_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -831,12 +876,28 @@ async def text_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if get_setting_context(user_id):
         if not text.isdigit():
-            await send_long_message(update, "Vui lòng nhập số giây, ví dụ: 300")
+            markup = ForceReply(
+                selective=True,
+                input_field_placeholder="Ví dụ: 300",
+            )
+            message = await update.message.reply_text(
+                "Giá trị không hợp lệ. Vui lòng nhập số giây (phải là số nguyên dương).\nVí dụ: 300",
+                reply_markup=markup,
+            )
+            schedule_auto_delete(message, user_id)
             return
 
         seconds = int(text)
         if seconds < 0:
-            await send_long_message(update, "Số giây phải lớn hơn hoặc bằng 0.")
+            markup = ForceReply(
+                selective=True,
+                input_field_placeholder="Ví dụ: 300",
+            )
+            message = await update.message.reply_text(
+                "Số giây phải lớn hơn hoặc bằng 0. Vui lòng nhập lại:\nVí dụ: 300",
+                reply_markup=markup,
+            )
+            schedule_auto_delete(message, user_id)
             return
 
         update_user_settings(
@@ -845,7 +906,7 @@ async def text_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             auto_delete_seconds=seconds,
         )
         clear_setting_context(user_id)
-        await send_long_message(update, settings_text(user_id))
+        await send_or_edit_text(update, settings_text(user_id), reply_markup=settings_keyboard(user_id))
         return
 
     if get_login_context(user_id):
