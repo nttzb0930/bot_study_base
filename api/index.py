@@ -49,7 +49,7 @@ telegram_app.add_handler(CommandHandler("setting", setting_command))
 telegram_app.add_handler(CallbackQueryHandler(callback_selection))
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_selection))
 
-fastapi_app = FastAPI()
+app = FastAPI()
 
 # Cache to ensure we only initialize once
 is_initialized = False
@@ -61,7 +61,7 @@ async def initialize_telegram():
         await telegram_app.start()
         is_initialized = True
 
-@fastapi_app.post("/webhook")
+@app.post("/webhook")
 async def webhook(request: Request):
     await initialize_telegram()
     try:
@@ -72,6 +72,6 @@ async def webhook(request: Request):
         print(f"Webhook processing error: {e}")
     return Response(content="OK", status_code=200)
 
-@fastapi_app.get("/")
+@app.get("/")
 async def index():
     return {"status": "ok", "message": "Telegram Bot is running"}
