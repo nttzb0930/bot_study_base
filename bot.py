@@ -20,7 +20,7 @@ from telegram.ext import (
 
 from check_scores import format_gpa_summary_table, format_score_row_detail_table, get_gpa_records, get_scores
 from login import get_existing_login_status, login as uneti_login, save_login
-from db import load_user_settings, save_user_settings, delete_user_login
+from db import load_user_settings, save_user_settings, delete_user_login, load_tokens
 
 
 logging.basicConfig(
@@ -320,9 +320,12 @@ def format_gpa_table_html(records: list[dict], title: str) -> str:
     return f"<pre>{html.escape(format_gpa_summary_table(records, title))}</pre>"
 
 
-def main_menu_text() -> str:
+def main_menu_text(user_id: str) -> str:
+    tokens = load_tokens()
+    username = tokens.get(str(user_id), {}).get("username", "Sinh viên")
     return (
-        "📌 <b>BẢNG ĐIỀU KHIỂN CHÍNH</b>\n\n"
+        f"📌 <b>BẢNG ĐIỀU KHIỂN CHÍNH</b>\n"
+        f"👤 Tài khoản: <code>{username}</code>\n\n"
         "Vui lòng chọn chức năng dưới đây để thực hiện:"
     )
 
@@ -333,6 +336,7 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton("📊 Tra cứu điểm", callback_data="menu:check")],
             [InlineKeyboardButton("📈 Xem GPA", callback_data="menu:gpa")],
             [InlineKeyboardButton("⚙️ Cài đặt", callback_data="menu:setting")],
+            [InlineKeyboardButton("🚪 Đăng xuất", callback_data="menu:logout")],
         ]
     )
 
@@ -559,19 +563,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         status = None
 
     if status in {"valid", "refreshed"}:
-        await send_or_edit_html(update, main_menu_text(), reply_markup=main_menu_keyboard())
+        await send_or_edit_html(update, main_menu_text(user_id), reply_markup=main_menu_keyboard())
     else:
         text = "\n".join(
             [
                 "Chào mừng bạn đến với Uneti Study Bot!",
                 "Bạn chưa đăng nhập hoặc phiên đăng nhập đã hết hạn.",
                 "",
-                "Lệnh dùng:",
-                "/login - Đăng nhập tài khoản sinh viên UNETI",
-                "/login <mssv> <mật_khẩu> - Đăng nhập nhanh",
+                "Vui lòng chọn nút bên dưới hoặc sử dụng lệnh /login để đăng nhập."
             ]
         )
-        await send_long_message(update, text)
+        keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔑 Đăng nhập", callback_data="menu:login")]]
+        )
+        await send_or_edit_html(update, text, reply_markup=keyboard)
 
 
 async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -782,7 +787,7 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if data.startswith("menu:"):
         if data == "menu:main":
             await query.answer()
-            await send_or_edit_html(update, main_menu_text(), reply_markup=main_menu_keyboard())
+            await send_or_edit_html(update, main_menu_text(user_id), reply_markup=main_menu_keyboard())
             return
 
         if data == "menu:check":
@@ -817,6 +822,29 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if data == "menu:setting":
             await query.answer()
             await send_or_edit_text(update, settings_text(user_id), reply_markup=settings_keyboard(user_id))
+            return
+
+        if data == "menu:logout":
+            try:
+                await asyncio.to_thread(delete_user_login, user_id)
+                await query.answer(text="Đã đăng xuất!")
+                text = (
+                    "Đăng xuất thành công. Thông tin đăng nhập của bạn đã được xóa.\n\n"
+                    "Dùng lệnh /login hoặc bấm nút bên dưới để đăng nhập lại."
+                )
+                keyboard = InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔑 Đăng nhập", callback_data="menu:login")]]
+                )
+                await send_or_edit_html(update, text, reply_markup=keyboard)
+            except Exception as exc:
+                logger.exception("Logout failed")
+                await query.answer(text="Đăng xuất thất bại!")
+                await send_or_edit_text(update, f"Đăng xuất thất bại: {exc}")
+            return
+
+        if data == "menu:login":
+            await query.answer()
+            await prompt_login_credentials(update, user_id)
             return
 
     if data.startswith("setting:"):
