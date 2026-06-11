@@ -312,6 +312,10 @@ def year_keyboard(rows: list[dict]) -> InlineKeyboardMarkup:
         count = len(rows_for_year(rows, year))
         buttons.append([InlineKeyboardButton(f"{year}-{year + 1} ({count})", callback_data=f"year:{year}")])
     buttons.append([InlineKeyboardButton("Tất cả môn", callback_data="all")])
+    buttons.append([
+        InlineKeyboardButton("Xem GPA", callback_data="gpa:menu"),
+        InlineKeyboardButton("Cài đặt", callback_data="setting:menu"),
+    ])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -419,6 +423,7 @@ def settings_keyboard(user_id: str) -> InlineKeyboardMarkup:
                 InlineKeyboardButton("1 giờ", callback_data="setting:time:3600"),
             ],
             [InlineKeyboardButton("Nhập số giây", callback_data="setting:custom")],
+            [InlineKeyboardButton("Quay lại", callback_data="back:years")],
         ]
     )
 
@@ -691,6 +696,11 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
     data = query.data or ""
 
     if data.startswith("setting:"):
+        if data == "setting:menu":
+            await query.answer()
+            await send_or_edit_text(update, settings_text(user_id), reply_markup=settings_keyboard(user_id))
+            return
+
         if data == "setting:toggle":
             current = get_user_settings(user_id)
             new_enabled = not current["auto_delete_enabled"]
