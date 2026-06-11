@@ -556,9 +556,9 @@ def year_keyboard(rows: list[dict]) -> InlineKeyboardMarkup:
     buttons = []
     for year in available_years(rows):
         count = len(rows_for_year(rows, year))
-        buttons.append([InlineKeyboardButton(f"{year}-{year + 1} ({count})", callback_data=f"year:{year}")])
-    buttons.append([InlineKeyboardButton("Tất cả môn", callback_data="all")])
-    buttons.append([InlineKeyboardButton("Quay lại", callback_data="menu:main")])
+        buttons.append([InlineKeyboardButton(f"🗓️ {year}-{year + 1} ({count})", callback_data=f"year:{year}")])
+    buttons.append([InlineKeyboardButton("📚 Tất cả môn", callback_data="all")])
+    buttons.append([InlineKeyboardButton("⬅️ Quay lại", callback_data="menu:main")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -566,8 +566,8 @@ def semester_keyboard(rows: list[dict], year: int) -> InlineKeyboardMarkup:
     buttons = []
     for semester in available_semesters(rows, year):
         count = len(rows_for_semester(rows, year, semester))
-        buttons.append([InlineKeyboardButton(f"Học kỳ {semester} ({count})", callback_data=f"semester:{year}:{semester}")])
-    buttons.append([InlineKeyboardButton("Quay lại", callback_data="back:years")])
+        buttons.append([InlineKeyboardButton(f"📝 Học kỳ {semester} ({count})", callback_data=f"semester:{year}:{semester}")])
+    buttons.append([InlineKeyboardButton("⬅️ Quay lại", callback_data="back:years")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -586,7 +586,7 @@ def subjects_keyboard(rows: list[dict], year: int | None = None) -> InlineKeyboa
         )
 
     back_callback = f"back:semesters:{year}" if year is not None else "back:years"
-    buttons.append([InlineKeyboardButton("Quay lại", callback_data=back_callback)])
+    buttons.append([InlineKeyboardButton("⬅️ Quay lại", callback_data=back_callback)])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -611,16 +611,16 @@ def gpa_records_for_year(records: list[dict], year: int) -> list[dict]:
 
 
 def gpa_menu_keyboard(records: list[dict]) -> InlineKeyboardMarkup:
-    buttons = [[InlineKeyboardButton("GPA hiện tại", callback_data="gpa:current")]]
+    buttons = [[InlineKeyboardButton("📈 GPA hiện tại", callback_data="gpa:current")]]
     for year in available_gpa_years(records):
         count = len(gpa_records_for_year(records, year))
-        buttons.append([InlineKeyboardButton(f"{year}-{year + 1} ({count} học kỳ)", callback_data=f"gpa:year:{year}")])
-    buttons.append([InlineKeyboardButton("Quay lại", callback_data="menu:main")])
+        buttons.append([InlineKeyboardButton(f"🗓️ {year}-{year + 1} ({count} học kỳ)", callback_data=f"gpa:year:{year}")])
+    buttons.append([InlineKeyboardButton("⬅️ Quay lại", callback_data="menu:main")])
     return InlineKeyboardMarkup(buttons)
 
 
 def gpa_back_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("Quay lại", callback_data="gpa:menu")]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Quay lại", callback_data="gpa:menu")]])
 
 
 def format_seconds(seconds: int) -> str:
@@ -652,23 +652,23 @@ def settings_text(user_id: str) -> str:
 
 def settings_keyboard(user_id: str) -> InlineKeyboardMarkup:
     settings = get_user_settings(user_id)
-    toggle_label = "Tắt auto-delete" if settings["auto_delete_enabled"] else "Bật auto-delete"
-    notif_label = "Tắt thông báo điểm" if settings["score_notifications_enabled"] else "Bật thông báo điểm"
+    toggle_label = "🔴 Tắt tự động xóa" if settings["auto_delete_enabled"] else "🟢 Bật tự động xóa"
+    notif_label = "🔕 Tắt thông báo điểm" if settings["score_notifications_enabled"] else "🔔 Bật thông báo điểm"
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton(toggle_label, callback_data="setting:toggle")],
             [
-                InlineKeyboardButton("1 phút", callback_data="setting:time:60"),
-                InlineKeyboardButton("5 phút", callback_data="setting:time:300"),
-                InlineKeyboardButton("10 phút", callback_data="setting:time:600"),
+                InlineKeyboardButton("⏱️ 1 phút", callback_data="setting:time:60"),
+                InlineKeyboardButton("⏱️ 5 phút", callback_data="setting:time:300"),
+                InlineKeyboardButton("⏱️ 10 phút", callback_data="setting:time:600"),
             ],
             [
-                InlineKeyboardButton("30 phút", callback_data="setting:time:1800"),
-                InlineKeyboardButton("1 giờ", callback_data="setting:time:3600"),
+                InlineKeyboardButton("⏱️ 30 phút", callback_data="setting:time:1800"),
+                InlineKeyboardButton("⏱️ 1 giờ", callback_data="setting:time:3600"),
             ],
-            [InlineKeyboardButton("Nhập số giây", callback_data="setting:custom")],
+            [InlineKeyboardButton("✏️ Tự chọn giây", callback_data="setting:custom")],
             [InlineKeyboardButton(notif_label, callback_data="setting:notif_toggle")],
-            [InlineKeyboardButton("Quay lại", callback_data="menu:main")],
+            [InlineKeyboardButton("⬅️ Quay lại", callback_data="menu:main")],
         ]
     )
 
