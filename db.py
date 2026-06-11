@@ -26,9 +26,9 @@ SETTINGS_FILE = Path(os.getenv("SETTINGS_FILE", "user_settings.json"))
 def load_tokens() -> dict:
     if db is not None:
         try:
-            tokens_col = db["tokens"]
+            users_col = db["users"]
             result = {}
-            for doc in tokens_col.find():
+            for doc in users_col.find():
                 user_id = doc.get("telegram_user_id")
                 if user_id:
                     result[str(user_id)] = {
@@ -53,9 +53,9 @@ def load_tokens() -> dict:
 def save_tokens(tokens: dict) -> None:
     if db is not None:
         try:
-            tokens_col = db["tokens"]
+            users_col = db["users"]
             for user_id, info in tokens.items():
-                tokens_col.update_one(
+                users_col.update_one(
                     {"telegram_user_id": str(user_id)},
                     {"$set": {
                         "username": info.get("username"),
