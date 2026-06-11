@@ -320,13 +320,30 @@ def format_gpa_table_html(records: list[dict], title: str) -> str:
     return f"<pre>{html.escape(format_gpa_summary_table(records, title))}</pre>"
 
 
+def main_menu_text() -> str:
+    return (
+        "📌 <b>BẢNG ĐIỀU KHIỂN CHÍNH</b>\n\n"
+        "Vui lòng chọn chức năng dưới đây để thực hiện:"
+    )
+
+
+def main_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("📊 Tra cứu điểm", callback_data="menu:check")],
+            [InlineKeyboardButton("📈 Xem GPA", callback_data="menu:gpa")],
+            [InlineKeyboardButton("⚙️ Cài đặt", callback_data="menu:setting")],
+        ]
+    )
+
+
 def year_keyboard(rows: list[dict]) -> InlineKeyboardMarkup:
     buttons = []
     for year in available_years(rows):
         count = len(rows_for_year(rows, year))
         buttons.append([InlineKeyboardButton(f"{year}-{year + 1} ({count})", callback_data=f"year:{year}")])
     buttons.append([InlineKeyboardButton("Tất cả môn", callback_data="all")])
-    buttons.append([InlineKeyboardButton("Quay lại", callback_data="close_menu")])
+    buttons.append([InlineKeyboardButton("Quay lại", callback_data="menu:main")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -383,7 +400,7 @@ def gpa_menu_keyboard(records: list[dict]) -> InlineKeyboardMarkup:
     for year in available_gpa_years(records):
         count = len(gpa_records_for_year(records, year))
         buttons.append([InlineKeyboardButton(f"{year}-{year + 1} ({count} học kỳ)", callback_data=f"gpa:year:{year}")])
-    buttons.append([InlineKeyboardButton("Quay lại", callback_data="close_menu")])
+    buttons.append([InlineKeyboardButton("Quay lại", callback_data="menu:main")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -436,7 +453,7 @@ def settings_keyboard(user_id: str) -> InlineKeyboardMarkup:
             ],
             [InlineKeyboardButton("Nhập số giây", callback_data="setting:custom")],
             [InlineKeyboardButton(notif_label, callback_data="setting:notif_toggle")],
-            [InlineKeyboardButton("Quay lại", callback_data="close_menu")],
+            [InlineKeyboardButton("Quay lại", callback_data="menu:main")],
         ]
     )
 
@@ -532,19 +549,29 @@ async def perform_login(update: Update, username: str, password: str, telegram_u
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.effective_user:
-        clear_all_contexts(str(update.effective_user.id))
-    text = "\n".join(
-        [
-            "Lệnh dùng:",
-            "/login - bot sẽ hỏi mssv và mật khẩu bằng reply",
-            "/login <mssv> <mật_khẩu>",
-            "/check - chọn năm học, học kỳ, môn bằng nút",
-            "",
-            "Nếu đang ở màn chọn, có thể nhập số thứ tự thay vì bấm nút.",
-        ]
-    )
-    await send_long_message(update, text)
+    if not update.effective_user:
+        return
+    user_id = str(update.effective_user.id)
+    clear_all_contexts(user_id)
+    try:
+        status = await asyncio.to_thread(get_existing_login_status, user_id)
+    except Exception:
+        status = None
+
+    if status in {"valid", "refreshed"}:
+        await send_or_edit_html(update, main_menu_text(), reply_markup=main_menu_keyboard())
+    else:
+        text = "\n".join(
+            [
+                "Chào mừng bạn đến với Uneti Study Bot!",
+                "Bạn chưa đăng nhập hoặc phiên đăng nhập đã hết hạn.",
+                "",
+                "Lệnh dùng:",
+                "/login - Đăng nhập tài khoản sinh viên UNETI",
+                "/login <mssv> <mật_khẩu> - Đăng nhập nhanh",
+            ]
+        )
+        await send_long_message(update, text)
 
 
 async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -728,7 +755,9 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user_id = str(update.effective_user.id)
     data = query.data or ""
 
-    if data.startswith("setting:"):
+    if data.startswith("menu:"):
+        clear_all_contexts(user_id)
+    elif data.startswith("setting:"):
         clear_login_context(user_id)
         clear_check_context(user_id)
     elif data.startswith("gpa:"):
@@ -749,6 +778,46 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
         except Exception:
             pass
         return
+
+    if data.startswith("menu:"):
+        if data == "menu:main":
+            await query.answer()
+            await send_or_edit_html(update, main_menu_text(), reply_markup=main_menu_keyboard())
+            return
+
+        if data == "menu:check":
+            try:
+                rows = await asyncio.to_thread(get_scores, user_id)
+            except KeyError:
+                await prompt_login_credentials(update, user_id)
+                return
+            except Exception as exc:
+                logger.exception("Check scores failed")
+                await send_or_edit_text(update, f"Không lấy được điểm: {exc}")
+                return
+            set_check_context(user_id, {"stage": "years"})
+            await query.answer()
+            await send_or_edit_text(update, "Chọn năm học:", reply_markup=year_keyboard(rows))
+            return
+
+        if data == "menu:gpa":
+            try:
+                records = await asyncio.to_thread(get_gpa_records, user_id)
+            except KeyError:
+                await prompt_login_credentials(update, user_id)
+                return
+            except Exception as exc:
+                logger.exception("GPA check failed")
+                await send_or_edit_text(update, f"Không lấy được GPA: {exc}")
+                return
+            await query.answer()
+            await send_or_edit_text(update, "Chọn kiểu xem GPA:", reply_markup=gpa_menu_keyboard(records))
+            return
+
+        if data == "menu:setting":
+            await query.answer()
+            await send_or_edit_text(update, settings_text(user_id), reply_markup=settings_keyboard(user_id))
+            return
 
     if data.startswith("setting:"):
         if data == "setting:menu":
