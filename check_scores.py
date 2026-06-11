@@ -403,6 +403,67 @@ def format_score_row_detail_table(row: dict) -> str:
     return "\n".join(lines)
 
 
+def get_schedules(telegram_user_id: str = "default") -> list[dict]:
+    tokens = load_tokens()
+    token_info = tokens[str(telegram_user_id)]
+    student_id = token_info["username"]
+    encoded_student_id = quote(student_id)
+
+    url = (
+        f"{API_BASE_URL}/SP_TC_SV_KetQuaHocTap_TiepNhan/"
+        "EDU_Load_Para_MaSinhVien_LichHocSinhVien"
+        f"?TC_SV_KetQuaHocTap_MaSinhVien={encoded_student_id}"
+    )
+
+    response = request_with_saved_token("GET", url, token_info)
+    save_tokens(tokens)
+
+    data = parse_json_response(response, "Lấy lịch học")
+    return data.get("body", [])
+
+
+def get_exam_schedules(telegram_user_id: str = "default") -> list[dict]:
+    tokens = load_tokens()
+    token_info = tokens[str(telegram_user_id)]
+    student_id = token_info["username"]
+    encoded_student_id = quote(student_id)
+
+    url = (
+        f"{API_BASE_URL}/SP_TC_SV_KetQuaHocTap_TiepNhan/"
+        "EDU_Load_Para_MaSinhVien_LichThiSinhVien"
+        f"?TC_SV_KetQuaHocTap_MaSinhVien={encoded_student_id}"
+    )
+
+    response = request_with_saved_token("GET", url, token_info)
+    save_tokens(tokens)
+
+    data = parse_json_response(response, "Lấy lịch thi")
+    return data.get("body", [])
+
+
+def get_student_profile(telegram_user_id: str) -> dict | None:
+    tokens = load_tokens()
+    token_info = tokens.get(str(telegram_user_id))
+    if not token_info:
+        raise KeyError("User not logged in")
+
+    student_id = token_info["username"]
+    from login import cryptojs_aes_encrypt
+    payload = {
+        "TC_SV_MaSinhVien": cryptojs_aes_encrypt(student_id)
+    }
+    
+    url = f"{API_BASE_URL}/SP_MC_MaSinhVien/Load_Web_App_Para"
+    response = request_with_saved_token("POST", url, token_info, json=payload)
+    save_tokens(tokens)
+    
+    data = parse_json_response(response, "Lấy thông tin sinh viên")
+    body = data.get("body", [])
+    if body and isinstance(body, list):
+        return body[0]
+    return None
+
+
 def main() -> None:
     rows = get_scores()
     print(f"Tổng số dòng điểm: {len(rows)}")

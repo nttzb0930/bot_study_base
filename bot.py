@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import html
 import json
 import logging
@@ -18,7 +19,15 @@ from telegram.ext import (
     filters,
 )
 
-from check_scores import format_gpa_summary_table, format_score_row_detail_table, get_gpa_records, get_scores
+from check_scores import (
+    format_gpa_summary_table,
+    format_score_row_detail_table,
+    get_gpa_records,
+    get_scores,
+    get_schedules,
+    get_exam_schedules,
+    get_student_profile,
+)
 from login import get_existing_login_status, login as uneti_login, save_login
 from db import load_user_settings, save_user_settings, delete_user_login, load_tokens
 
@@ -322,10 +331,14 @@ def format_gpa_table_html(records: list[dict], title: str) -> str:
 
 def main_menu_text(user_id: str) -> str:
     tokens = load_tokens()
-    username = tokens.get(str(user_id), {}).get("username", "Sinh viên")
+    user_info = tokens.get(str(user_id), {})
+    username = user_info.get("username", "Sinh viên")
+    full_name = user_info.get("fullName")
+    
+    account_str = f"{full_name} ({username})" if full_name else username
     return (
         f"📌 <b>BẢNG ĐIỀU KHIỂN CHÍNH</b>\n"
-        f"👤 Tài khoản: <code>{username}</code>\n\n"
+        f"👤 Tài khoản: <code>{account_str}</code>\n\n"
         "Vui lòng chọn chức năng dưới đây để thực hiện:"
     )
 
@@ -335,9 +348,201 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
         [
             [InlineKeyboardButton("📊 Tra cứu điểm", callback_data="menu:check")],
             [InlineKeyboardButton("📈 Xem GPA", callback_data="menu:gpa")],
+            [InlineKeyboardButton("📅 Lịch học & Thi", callback_data="menu:schedule")],
             [InlineKeyboardButton("⚙️ Cài đặt", callback_data="menu:setting")],
             [InlineKeyboardButton("🚪 Đăng xuất", callback_data="menu:logout")],
         ]
+    )
+
+
+def schedule_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("📅 Lịch học hôm nay", callback_data="schedule:today")],
+            [InlineKeyboardButton("🌅 Lịch học ngày mai", callback_data="schedule:tomorrow")],
+            [InlineKeyboardButton("📅 Lịch học tuần này", callback_data="schedule:week")],
+            [InlineKeyboardButton("📝 Lịch thi sắp tới", callback_data="schedule:exams")],
+            [InlineKeyboardButton("⬅️ Quay lại", callback_data="menu:main")],
+        ]
+    )
+
+
+def format_schedules_day(rows: list[dict], date_label: str) -> str:
+    if not rows:
+        return f"📅 <b>Lịch học {date_label}:</b>\nBạn không có lịch học vào ngày này! 🎉"
+
+    # Sort rows by period (TuTiet)
+    sorted_rows = sorted(rows, key=lambda r: r.get("TuTiet") or 0)
+
+    lines = [f"📅 <b>LỊCH HỌC {date_label.upper()}</b>", ""]
+    for idx, row in enumerate(sorted_rows, 1):
+        mon = row.get("TenMonHoc", "Không rõ")
+        tiet = f"{row.get('TuTiet')}-{row.get('DenTiet')}"
+        phong = row.get("TenPhong", "-").strip()
+        ca = row.get("CaHoc", "-")
+        gv = row.get("TenGiangVien", "-")
+        lines.append(
+            f"<b>{idx}. {mon}</b>\n"
+            f"  • Tiết: {tiet} ({ca})\n"
+            f"  • Phòng: {phong}\n"
+            f"  • GV: {gv}"
+        )
+    return "\n\n".join(lines)
+
+
+def format_schedules_week(rows: list[dict], start_date: str, end_date: str) -> str:
+    if not rows:
+        return f"📅 <b>Lịch học tuần này ({start_date} -> {end_date}):</b>\nBạn không có lịch học nào trong tuần này! 🎉"
+
+    # Sort rows by date, then TuTiet
+    sorted_rows = sorted(rows, key=lambda r: (r.get("NgayBatDau", "")[:10], r.get("TuTiet") or 0))
+
+    lines = [f"📅 <b>LỊCH HỌC TUẦN NÀY ({start_date} -> {end_date})</b>", ""]
+    
+    current_date = ""
+    for row in sorted_rows:
+        row_date = row.get("NgayBatDau", "")[:10]
+        if row_date != current_date:
+            current_date = row_date
+            thu = row.get("Thu", 0)
+            thu_str = f"Thứ {thu}" if thu != 8 else "Chủ Nhật"
+            try:
+                parts = row_date.split("-")
+                beauty_date = f"{parts[2]}/{parts[1]}"
+            except Exception:
+                beauty_date = row_date
+            lines.append(f"\n📌 <b>{thu_str} ({beauty_date})</b>")
+
+        mon = row.get("TenMonHoc", "Không rõ")
+        tiet = f"{row.get('TuTiet')}-{row.get('DenTiet')}"
+        phong = row.get("TenPhong", "-").strip()
+        ca = row.get("CaHoc", "-")
+        lines.append(
+            f"  • <b>{mon}</b>\n"
+            f"    Tiết {tiet} ({ca}) | Phòng: {phong}"
+        )
+    return "\n".join(lines)
+
+
+def format_exam_schedule(rows: list[dict], today_str: str) -> str:
+    if not rows:
+        return "📝 <b>Lịch thi:</b>\nKhông tìm thấy dữ liệu lịch thi nào! 🎉"
+
+    upcoming = []
+    past = []
+    
+    for row in rows:
+        ngay_thi = row.get("TC_SV_KetQuaHocTap_LichThiSinhVien_NgayThi") or ""
+        date_str = ngay_thi[:10]
+        if date_str >= today_str:
+            upcoming.append(row)
+        else:
+            past.append(row)
+
+    # Sort upcoming by date ascending
+    upcoming = sorted(upcoming, key=lambda r: r.get("TC_SV_KetQuaHocTap_LichThiSinhVien_NgayThi", ""))
+    # Sort past by date descending
+    past = sorted(past, key=lambda r: r.get("TC_SV_KetQuaHocTap_LichThiSinhVien_NgayThi", ""), reverse=True)
+
+    lines = []
+    if upcoming:
+        lines.append("📝 <b>LỊCH THI SẮP TỚI</b>\n")
+        for idx, row in enumerate(upcoming, 1):
+            mon = row.get("TC_SV_KetQuaHocTap_LichThiSinhVien_TenMonHoc", "Không rõ")
+            ngay = row.get("TC_SV_KetQuaHocTap_LichThiSinhVien_NgayThi", "")[:10]
+            try:
+                parts = ngay.split("-")
+                beauty_date = f"{parts[2]}/{parts[1]}/{parts[0]}"
+            except Exception:
+                beauty_date = ngay
+            
+            thu = row.get("TC_SV_KetQuaHocTap_LichThiSinhVien_Thu", 0)
+            thu_str = f"Thứ {thu}" if thu != 8 else "Chủ Nhật"
+            ca = row.get("TC_SV_KetQuaHocTap_LichThiSinhVien_CaThi", "-")
+            tiet = row.get("TC_SV_KetQuaHocTap_LichThiSinhVien_TuTietDenTiet", "-")
+            phong = row.get("TC_SV_KetQuaHocTap_LichThiSinhVien_TenPhong", "-").strip()
+            loai = row.get("TC_SV_KetQuaHocTap_LichThiSinhVien_LoaiThi", "-")
+            
+            lines.append(
+                f"<b>{idx}. {mon}</b>\n"
+                f"  • Ngày: {beauty_date} ({thu_str})\n"
+                f"  • Giờ/Tiết: Tiết {tiet} ({ca})\n"
+                f"  • Phòng: {phong}\n"
+                f"  • Hình thức/Đợt: {loai}"
+            )
+    else:
+        lines.append("📝 <b>LỊCH THI SẮP TỚI</b>\nBạn không có lịch thi nào sắp tới! 🎉")
+
+    if past:
+        lines.append("\n" + "-" * 20)
+        lines.append("📚 <b>LỊCH THI ĐÃ QUA (Tối đa 5 đợt gần nhất)</b>\n")
+        for idx, row in enumerate(past[:5], 1):
+            mon = row.get("TC_SV_KetQuaHocTap_LichThiSinhVien_TenMonHoc", "Không rõ")
+            ngay = row.get("TC_SV_KetQuaHocTap_LichThiSinhVien_NgayThi", "")[:10]
+            try:
+                parts = ngay.split("-")
+                beauty_date = f"{parts[2]}/{parts[1]}/{parts[0]}"
+            except Exception:
+                beauty_date = ngay
+            loai = row.get("TC_SV_KetQuaHocTap_LichThiSinhVien_LoaiThi", "-")
+            lines.append(f"• <b>{mon}</b> ({beauty_date}) - {loai}")
+
+    return "\n".join(lines)
+
+
+def format_student_profile(profile: dict) -> str:
+    if not profile:
+        return "❌ Không tìm thấy thông tin sinh viên."
+
+    ho_dem = profile.get("HoDem", "").strip()
+    ten = profile.get("Ten", "").strip()
+    full_name = f"{ho_dem} {ten}".strip()
+    msv = profile.get("MaSinhVien", "-")
+    lop = profile.get("LopHoc", "-")
+    nganh = profile.get("ChuyenNganh", "-")
+    khoa = profile.get("Khoa", "-")
+    nien_khoa = profile.get("KhoaHoc", "-")
+    he_dt = profile.get("BacDaoTao", "-")
+    co_so = profile.get("CoSo", "-")
+    
+    gioi_tinh = "Nam" if profile.get("GioiTinh") is True else "Nữ"
+    
+    ngay_sinh = profile.get("NgaySinh", "-")
+    if ngay_sinh and len(ngay_sinh) >= 10:
+        if "T" in ngay_sinh:
+            ngay_sinh = ngay_sinh.split("T")[0]
+        try:
+            parts = ngay_sinh.split("-")
+            if len(parts) == 3:
+                ngay_sinh = f"{parts[2]}/{parts[1]}/{parts[0]}"
+        except Exception:
+            pass
+
+    noi_sinh = profile.get("NoiSinh", "-")
+    cmnd = profile.get("SoCMND", "-")
+    sdt = profile.get("SoDienThoai", "-")
+    email = profile.get("Email_TruongCap", "-")
+    dia_chi = profile.get("DiaChiThuongTru", "-")
+    trang_thai = profile.get("TrangThaiHocTap", "-")
+
+    return (
+        f"👤 <b>THÔNG TIN CÁ NHÂN SINH VIÊN</b>\n\n"
+        f"• <b>Họ và tên:</b> {full_name}\n"
+        f"• <b>Mã sinh viên:</b> <code>{msv}</code>\n"
+        f"• <b>Lớp:</b> {lop}\n"
+        f"• <b>Chuyên ngành:</b> {nganh}\n"
+        f"• <b>Khoa:</b> {khoa}\n"
+        f"• <b>Khóa học:</b> {nien_khoa} ({he_dt})\n"
+        f"• <b>Cơ sở:</b> {co_so}\n"
+        f"• <b>Trạng thái:</b> {trang_thai}\n"
+        f"--------------------\n"
+        f"• <b>Giới tính:</b> {gioi_tinh}\n"
+        f"• <b>Ngày sinh:</b> {ngay_sinh}\n"
+        f"• <b>Nơi sinh:</b> {noi_sinh}\n"
+        f"• <b>Số CMND:</b> <code>{cmnd}</code>\n"
+        f"• <b>Số điện thoại:</b> <code>{sdt}</code>\n"
+        f"• <b>Email trường:</b> <code>{email}</code>\n"
+        f"• <b>Địa chỉ thường trú:</b> {dia_chi}"
     )
 
 
@@ -543,6 +748,21 @@ async def perform_login(update: Update, username: str, password: str, telegram_u
     try:
         token_data = await asyncio.to_thread(uneti_login, username, password)
         await asyncio.to_thread(save_login, username, token_data, telegram_user_id)
+        
+        # Try fetching full name to save to tokens
+        try:
+            profile = await asyncio.to_thread(get_student_profile, telegram_user_id)
+            if profile:
+                ho_dem = profile.get("HoDem", "").strip()
+                ten = profile.get("Ten", "").strip()
+                full_name = f"{ho_dem} {ten}".strip()
+                if full_name:
+                    tokens = load_tokens()
+                    if telegram_user_id in tokens:
+                        tokens[telegram_user_id]["fullName"] = full_name
+                        save_tokens(tokens)
+        except Exception:
+            logger.exception("Failed to fetch profile for full name caching during login")
     except Exception as exc:
         logger.exception("Login failed")
         await send_long_message(update, f"Login thất bại: {exc}")
@@ -563,6 +783,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         status = None
 
     if status in {"valid", "refreshed"}:
+        tokens = load_tokens()
+        user_info = tokens.get(user_id, {})
+        if "fullName" not in user_info:
+            try:
+                profile = await asyncio.to_thread(get_student_profile, user_id)
+                if profile:
+                    ho_dem = profile.get("HoDem", "").strip()
+                    ten = profile.get("Ten", "").strip()
+                    full_name = f"{ho_dem} {ten}".strip()
+                    if full_name:
+                        user_info["fullName"] = full_name
+                        tokens[user_id] = user_info
+                        save_tokens(tokens)
+            except Exception:
+                pass
         await send_or_edit_html(update, main_menu_text(user_id), reply_markup=main_menu_keyboard())
     else:
         text = "\n".join(
@@ -617,6 +852,26 @@ async def logout_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as exc:
         logger.exception("Logout failed")
         await send_long_message(update, f"Đăng xuất thất bại: {exc}")
+
+
+async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_user:
+        return
+
+    user_id = str(update.effective_user.id)
+    clear_all_contexts(user_id)
+    try:
+        profile = await asyncio.to_thread(get_student_profile, user_id)
+    except KeyError:
+        await prompt_login_credentials(update, user_id)
+        return
+    except Exception as exc:
+        logger.exception("Get profile failed")
+        await send_long_message(update, f"Không lấy được thông tin sinh viên: {exc}")
+        return
+
+    formatted = format_student_profile(profile)
+    await send_or_edit_html(update, formatted)
 
 
 async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -769,6 +1024,10 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
         clear_login_context(user_id)
         clear_check_context(user_id)
         clear_setting_context(user_id)
+    elif data.startswith("schedule:"):
+        clear_login_context(user_id)
+        clear_check_context(user_id)
+        clear_setting_context(user_id)
     elif any(
         data.startswith(p)
         for p in ["back:years", "all", "year:", "semester:", "subject:", "back:semesters:", "back:subjects"]
@@ -786,6 +1045,21 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if data.startswith("menu:"):
         if data == "menu:main":
+            tokens = load_tokens()
+            user_info = tokens.get(user_id, {})
+            if "fullName" not in user_info:
+                try:
+                    profile = await asyncio.to_thread(get_student_profile, user_id)
+                    if profile:
+                        ho_dem = profile.get("HoDem", "").strip()
+                        ten = profile.get("Ten", "").strip()
+                        full_name = f"{ho_dem} {ten}".strip()
+                        if full_name:
+                            user_info["fullName"] = full_name
+                            tokens[user_id] = user_info
+                            save_tokens(tokens)
+                except Exception:
+                    pass
             await query.answer()
             await send_or_edit_html(update, main_menu_text(user_id), reply_markup=main_menu_keyboard())
             return
@@ -817,6 +1091,15 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 return
             await query.answer()
             await send_or_edit_text(update, "Chọn kiểu xem GPA:", reply_markup=gpa_menu_keyboard(records))
+            return
+
+        if data == "menu:schedule":
+            await query.answer()
+            await send_or_edit_text(
+                update,
+                "Chọn tính năng xem lịch học hoặc lịch thi dưới đây:",
+                reply_markup=schedule_menu_keyboard(),
+            )
             return
 
         if data == "menu:setting":
@@ -911,6 +1194,85 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
     else:
         await query.answer()
+
+    if data.startswith("schedule:"):
+        vn_tz = datetime.timezone(datetime.timedelta(hours=7))
+        now_vn = datetime.datetime.now(vn_tz)
+        today_str = now_vn.strftime("%Y-%m-%d")
+
+        if data == "schedule:today":
+            try:
+                await query.answer(text="Đang lấy lịch học hôm nay...")
+                rows = await asyncio.to_thread(get_schedules, user_id)
+            except KeyError:
+                await prompt_login_credentials(update, user_id)
+                return
+            except Exception as exc:
+                logger.exception("Get schedule today failed")
+                await send_or_edit_text(update, f"Không lấy được lịch học: {exc}")
+                return
+            
+            day_rows = [r for r in rows if r.get("NgayBatDau", "")[:10] == today_str]
+            formatted = format_schedules_day(day_rows, "hôm nay")
+            await send_or_edit_html(update, formatted, reply_markup=schedule_menu_keyboard())
+            return
+
+        if data == "schedule:tomorrow":
+            tomorrow_str = (now_vn + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+            try:
+                await query.answer(text="Đang lấy lịch học ngày mai...")
+                rows = await asyncio.to_thread(get_schedules, user_id)
+            except KeyError:
+                await prompt_login_credentials(update, user_id)
+                return
+            except Exception as exc:
+                logger.exception("Get schedule tomorrow failed")
+                await send_or_edit_text(update, f"Không lấy được lịch học: {exc}")
+                return
+            
+            day_rows = [r for r in rows if r.get("NgayBatDau", "")[:10] == tomorrow_str]
+            formatted = format_schedules_day(day_rows, "ngày mai")
+            await send_or_edit_html(update, formatted, reply_markup=schedule_menu_keyboard())
+            return
+
+        if data == "schedule:week":
+            start_of_week = now_vn - datetime.timedelta(days=now_vn.weekday())
+            end_of_week = start_of_week + datetime.timedelta(days=6)
+            start_str = start_of_week.strftime("%Y-%m-%d")
+            end_str = end_of_week.strftime("%Y-%m-%d")
+            try:
+                await query.answer(text="Đang lấy lịch học tuần này...")
+                rows = await asyncio.to_thread(get_schedules, user_id)
+            except KeyError:
+                await prompt_login_credentials(update, user_id)
+                return
+            except Exception as exc:
+                logger.exception("Get schedule week failed")
+                await send_or_edit_text(update, f"Không lấy được lịch học: {exc}")
+                return
+            
+            week_rows = [r for r in rows if start_str <= r.get("NgayBatDau", "")[:10] <= end_str]
+            beauty_start = start_of_week.strftime("%d/%m")
+            beauty_end = end_of_week.strftime("%d/%m")
+            formatted = format_schedules_week(week_rows, beauty_start, beauty_end)
+            await send_or_edit_html(update, formatted, reply_markup=schedule_menu_keyboard())
+            return
+
+        if data == "schedule:exams":
+            try:
+                await query.answer(text="Đang lấy lịch thi...")
+                rows = await asyncio.to_thread(get_exam_schedules, user_id)
+            except KeyError:
+                await prompt_login_credentials(update, user_id)
+                return
+            except Exception as exc:
+                logger.exception("Get exam schedules failed")
+                await send_or_edit_text(update, f"Không lấy được lịch thi: {exc}")
+                return
+
+            formatted = format_exam_schedule(rows, today_str)
+            await send_or_edit_html(update, formatted, reply_markup=schedule_menu_keyboard())
+            return
 
     if data.startswith("gpa:"):
         try:
@@ -1169,6 +1531,7 @@ async def post_init(application) -> None:
         [
             BotCommand("start", "Hướng dẫn sử dụng"),
             BotCommand("login", "Đăng nhập UNETI"),
+            BotCommand("info", "Thông tin cá nhân"),
             BotCommand("check", "Xem điểm"),
             BotCommand("gpa", "Xem GPA"),
             BotCommand("setting", "Cài đặt bot"),
@@ -1188,6 +1551,7 @@ def main() -> None:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("login", login_command))
     app.add_handler(CommandHandler("logout", logout_command))
+    app.add_handler(CommandHandler("info", info_command))
     app.add_handler(CommandHandler("check", check_command))
     app.add_handler(CommandHandler("gpa", gpa_command))
     app.add_handler(CommandHandler("setting", setting_command))

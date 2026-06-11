@@ -35,6 +35,7 @@ def load_tokens() -> dict:
                         "username": doc.get("username"),
                         "token": doc.get("token"),
                         "refreshToken": doc.get("refreshToken"),
+                        "fullName": doc.get("fullName"),
                     }
             return result
         except Exception as e:
@@ -61,6 +62,7 @@ def save_tokens(tokens: dict) -> None:
                         "username": info.get("username"),
                         "token": info.get("token"),
                         "refreshToken": info.get("refreshToken"),
+                        "fullName": info.get("fullName"),
                     }},
                     upsert=True
                 )
