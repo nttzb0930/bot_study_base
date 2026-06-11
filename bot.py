@@ -322,7 +322,6 @@ def year_keyboard(rows: list[dict]) -> InlineKeyboardMarkup:
         count = len(rows_for_year(rows, year))
         buttons.append([InlineKeyboardButton(f"{year}-{year + 1} ({count})", callback_data=f"year:{year}")])
     buttons.append([InlineKeyboardButton("Tất cả môn", callback_data="all")])
-    buttons.append([InlineKeyboardButton("Quay lại", callback_data="close_menu")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -349,10 +348,8 @@ def subjects_keyboard(rows: list[dict], year: int | None = None) -> InlineKeyboa
             ]
         )
 
-    nav_buttons = [InlineKeyboardButton("Năm học", callback_data="back:years")]
-    if year is not None:
-        nav_buttons.append(InlineKeyboardButton("Học kỳ", callback_data=f"back:semesters:{year}"))
-    buttons.append(nav_buttons)
+    back_callback = f"back:semesters:{year}" if year is not None else "back:years"
+    buttons.append([InlineKeyboardButton("Quay lại", callback_data=back_callback)])
     return InlineKeyboardMarkup(buttons)
 
 
