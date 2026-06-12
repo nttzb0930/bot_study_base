@@ -603,8 +603,8 @@ def subjects_keyboard(rows: list[dict], year: int | None = None, page: int = 0, 
             emoji = "🔴"
             
         idx_str = f"{absolute_index:02d}"
-        sub_name = truncate(subject_name(row), 20)
-        button_text = f"{emoji} {idx_str}. {sub_name:<20} | TK: {score_text}"
+        sub_name = truncate(subject_name(row), 24)
+        button_text = f"{emoji} {idx_str}. {sub_name} ({score_text})"
 
         buttons.append(
             [
