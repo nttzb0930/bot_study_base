@@ -29,7 +29,7 @@ from check_scores import (
     get_student_profile,
 )
 from login import get_existing_login_status, login as uneti_login, save_login
-from db import load_user_settings, save_user_settings, delete_user_login, load_tokens
+from db import load_user_settings, save_user_settings, delete_user_login, load_tokens, save_tokens
 
 
 logging.basicConfig(
@@ -303,17 +303,28 @@ def format_score_list(rows: list[dict], title: str | None = None) -> str:
     return "\n".join(lines)
 
 
-def format_score_table(rows: list[dict], title: str | None = None) -> str:
-    header = title or f"Tìm thấy {len(rows)} môn"
+def format_score_table(rows: list[dict], title: str | None = None, page: int = 0, page_size: int = 10) -> str:
+    start_idx = page * page_size
+    end_idx = start_idx + page_size
+    page_rows = rows[start_idx:end_idx]
+
+    total_pages = (len(rows) + page_size - 1) // page_size
+    base_title = title or f"Tìm thấy {len(rows)} môn"
+    if total_pages > 1:
+        header = f"{base_title} (Trang {page + 1}/{total_pages})"
+    else:
+        header = base_title
+
     table_lines = [
         f"{'#':>2}  {'Môn học':<26} {'HK':<2} {'TK':>4}",
         "-" * 39,
     ]
-    for index, row in enumerate(rows, start=1):
+    for i, row in enumerate(page_rows):
+        absolute_index = start_idx + i + 1
         score = final_score(row)
         score_text = "-" if score is None else str(score)
         table_lines.append(
-            f"{index:>2}  {truncate(subject_name(row), 26):<26} "
+            f"{absolute_index:>2}  {truncate(subject_name(row), 26):<26} "
             f"{semester_number(row):<2} {score_text:>4}"
         )
 
@@ -571,9 +582,14 @@ def semester_keyboard(rows: list[dict], year: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
-def subjects_keyboard(rows: list[dict], year: int | None = None) -> InlineKeyboardMarkup:
+def subjects_keyboard(rows: list[dict], year: int | None = None, page: int = 0, page_size: int = 10) -> InlineKeyboardMarkup:
     buttons = []
-    for index, row in enumerate(rows, start=1):
+    start_idx = page * page_size
+    end_idx = start_idx + page_size
+    page_rows = rows[start_idx:end_idx]
+
+    for i, row in enumerate(page_rows):
+        absolute_index = start_idx + i + 1
         score = final_score(row)
         score_text = "-" if score is None else str(score)
         
@@ -586,14 +602,31 @@ def subjects_keyboard(rows: list[dict], year: int | None = None) -> InlineKeyboa
         else:
             emoji = "🔴"
             
+        idx_str = f"{absolute_index:02d}"
+        sub_name = truncate(subject_name(row), 20)
+        button_text = f"{emoji} {idx_str}. {sub_name:<20} | TK: {score_text}"
+
         buttons.append(
             [
                 InlineKeyboardButton(
-                    f"{emoji} {index}. {truncate(subject_name(row), 24)} | TK {score_text}",
+                    button_text,
                     callback_data=f"subject:{score_id(row)}",
                 )
             ]
         )
+
+    # Navigation buttons
+    nav_row = []
+    total_pages = (len(rows) + page_size - 1) // page_size
+    if total_pages > 1:
+        if page > 0:
+            nav_row.append(InlineKeyboardButton("⬅️ Trang trước", callback_data=f"subjects:page:{page - 1}"))
+        nav_row.append(InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="none"))
+        if page < total_pages - 1:
+            nav_row.append(InlineKeyboardButton("Trang sau ➡️", callback_data=f"subjects:page:{page + 1}"))
+            
+    if nav_row:
+        buttons.append(nav_row)
 
     back_callback = f"back:semesters:{year}" if year is not None else "back:years"
     buttons.append([InlineKeyboardButton("⬅️ Quay lại", callback_data=back_callback)])
@@ -915,8 +948,12 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     current_context = get_check_context(user_id)
 
     if requested_id.lower() == "all":
-        set_check_context(user_id, {"stage": "subjects", "year": None, "semester": None})
-        await send_long_html_message(update, format_score_table(rows, f"Tất cả: {len(rows)} môn"))
+        set_check_context(user_id, {"stage": "subjects", "year": None, "semester": None, "page": 0})
+        await send_or_edit_html(
+            update,
+            format_score_table(rows, f"Tất cả: {len(rows)} môn", page=0),
+            reply_markup=subjects_keyboard(rows, year=None, page=0),
+        )
         return
 
     if requested_id.isdigit() and len(requested_id) <= 2:
@@ -939,14 +976,16 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 semester_rows = rows_for_semester(rows, selected_year, selected_semester)
                 set_check_context(
                     user_id,
-                    {"stage": "subjects", "year": selected_year, "semester": selected_semester},
+                    {"stage": "subjects", "year": selected_year, "semester": selected_semester, "page": 0},
                 )
-                await send_long_html_message(
+                await send_or_edit_html(
                     update,
                     format_score_table(
                         semester_rows,
                         f"Năm {selected_year}-{selected_year + 1}, học kỳ {selected_semester}: {len(semester_rows)} môn",
+                        page=0,
                     ),
+                    reply_markup=subjects_keyboard(semester_rows, year=selected_year, page=0),
                 )
                 return
 
@@ -1031,6 +1070,10 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user_id = str(update.effective_user.id)
     data = query.data or ""
 
+    if data == "none":
+        await query.answer()
+        return
+
     if data.startswith("menu:"):
         clear_all_contexts(user_id)
     elif data.startswith("setting:"):
@@ -1046,7 +1089,7 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
         clear_setting_context(user_id)
     elif any(
         data.startswith(p)
-        for p in ["back:years", "all", "year:", "semester:", "subject:", "back:semesters:", "back:subjects"]
+        for p in ["back:years", "all", "year:", "semester:", "subject:", "back:semesters:", "back:subjects", "subjects:page:"]
     ):
         clear_login_context(user_id)
         clear_setting_context(user_id)
@@ -1359,31 +1402,33 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
         ctx = get_check_context(user_id)
         year = ctx.get("year")
         semester = ctx.get("semester")
+        page = ctx.get("page", 0)
         if year is None:
-            set_check_context(user_id, {"stage": "subjects", "year": None, "semester": None})
+            set_check_context(user_id, {"stage": "subjects", "year": None, "semester": None, "page": page})
             await send_or_edit_html(
                 update,
-                format_score_table(rows, f"Tất cả: {len(rows)} môn"),
-                reply_markup=subjects_keyboard(rows),
+                format_score_table(rows, f"Tất cả: {len(rows)} môn", page=page),
+                reply_markup=subjects_keyboard(rows, year=None, page=page),
             )
         elif semester is None:
-            set_check_context(user_id, {"stage": "subjects", "year": year, "semester": None})
+            set_check_context(user_id, {"stage": "subjects", "year": year, "semester": None, "page": page})
             year_rows = rows_for_year(rows, year)
             await send_or_edit_html(
                 update,
-                format_score_table(year_rows, f"Năm {year}-{year + 1}: {len(year_rows)} môn"),
-                reply_markup=subjects_keyboard(year_rows, year),
+                format_score_table(year_rows, f"Năm {year}-{year + 1}: {len(year_rows)} môn", page=page),
+                reply_markup=subjects_keyboard(year_rows, year=year, page=page),
             )
         else:
-            set_check_context(user_id, {"stage": "subjects", "year": year, "semester": semester})
+            set_check_context(user_id, {"stage": "subjects", "year": year, "semester": semester, "page": page})
             semester_rows = rows_for_semester(rows, year, semester)
             await send_or_edit_html(
                 update,
                 format_score_table(
                     semester_rows,
                     f"Năm {year}-{year + 1}, học kỳ {semester}: {len(semester_rows)} môn",
+                    page=page,
                 ),
-                reply_markup=subjects_keyboard(semester_rows, year),
+                reply_markup=subjects_keyboard(semester_rows, year=year, page=page),
             )
         return
 
@@ -1398,11 +1443,11 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     if data == "all":
-        set_check_context(user_id, {"stage": "subjects", "year": None, "semester": None})
+        set_check_context(user_id, {"stage": "subjects", "year": None, "semester": None, "page": 0})
         await send_or_edit_html(
             update,
-            format_score_table(rows, f"Tất cả: {len(rows)} môn"),
-            reply_markup=subjects_keyboard(rows),
+            format_score_table(rows, f"Tất cả: {len(rows)} môn", page=0),
+            reply_markup=subjects_keyboard(rows, year=None, page=0),
         )
         return
 
@@ -1421,14 +1466,42 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
         year = int(year_text)
         semester = int(semester_text)
         semester_rows = rows_for_semester(rows, year, semester)
-        set_check_context(user_id, {"stage": "subjects", "year": year, "semester": semester})
+        set_check_context(user_id, {"stage": "subjects", "year": year, "semester": semester, "page": 0})
         await send_or_edit_html(
             update,
             format_score_table(
                 semester_rows,
                 f"Năm {year}-{year + 1}, học kỳ {semester}: {len(semester_rows)} môn",
+                page=0,
             ),
-            reply_markup=subjects_keyboard(semester_rows, year),
+            reply_markup=subjects_keyboard(semester_rows, year=year, page=0),
+        )
+        return
+
+    if data.startswith("subjects:page:"):
+        page = int(data.split(":")[2])
+        ctx = get_check_context(user_id)
+        year = ctx.get("year")
+        semester = ctx.get("semester")
+        
+        ctx["page"] = page
+        set_check_context(user_id, ctx)
+        
+        if year is None:
+            filtered_rows = rows
+            title = f"Tất cả: {len(rows)} môn"
+        elif semester is None:
+            filtered_rows = rows_for_year(rows, year)
+            title = f"Năm {year}-{year + 1}: {len(filtered_rows)} môn"
+        else:
+            filtered_rows = rows_for_semester(rows, year, semester)
+            title = f"Năm {year}-{year + 1}, học kỳ {semester}: {len(filtered_rows)} môn"
+            
+        await query.answer()
+        await send_or_edit_html(
+            update,
+            format_score_table(filtered_rows, title, page=page),
+            reply_markup=subjects_keyboard(filtered_rows, year=year, page=page),
         )
         return
 
