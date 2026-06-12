@@ -27,6 +27,7 @@ from check_scores import (
     get_schedules,
     get_exam_schedules,
     get_student_profile,
+    format_drl_summary,
 )
 from login import get_existing_login_status, login as uneti_login, save_login
 from db import load_user_settings, save_user_settings, delete_user_login, load_tokens, save_tokens
@@ -359,6 +360,7 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
         [
             [InlineKeyboardButton("📊 Tra cứu điểm", callback_data="menu:check")],
             [InlineKeyboardButton("📈 Xem GPA", callback_data="menu:gpa")],
+            [InlineKeyboardButton("📝 Điểm rèn luyện", callback_data="menu:drl")],
             [InlineKeyboardButton("📅 Lịch học & Thi", callback_data="menu:schedule")],
             [InlineKeyboardButton("👤 Thông tin cá nhân", callback_data="menu:info")],
             [InlineKeyboardButton("⚙️ Cài đặt", callback_data="menu:setting")],
@@ -1053,6 +1055,26 @@ async def gpa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await send_long_message(update, "Dùng /gpa, /gpa current hoặc /gpa 2025.")
 
 
+async def drl_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_user:
+        return
+
+    user_id = str(update.effective_user.id)
+    clear_all_contexts(user_id)
+    try:
+        records = await asyncio.to_thread(get_gpa_records, user_id)
+    except KeyError:
+        await prompt_login_credentials(update, user_id)
+        return
+    except Exception as exc:
+        logger.exception("DRL check failed")
+        await send_long_message(update, f"Không lấy được điểm rèn luyện: {exc}")
+        return
+
+    formatted = format_drl_summary(records)
+    await send_or_edit_html(update, formatted)
+
+
 async def setting_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user:
         return
@@ -1150,6 +1172,22 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 return
             await query.answer()
             await send_or_edit_text(update, "Chọn kiểu xem GPA:", reply_markup=gpa_menu_keyboard(records))
+            return
+
+        if data == "menu:drl":
+            try:
+                records = await asyncio.to_thread(get_gpa_records, user_id)
+            except KeyError:
+                await prompt_login_credentials(update, user_id)
+                return
+            except Exception as exc:
+                logger.exception("DRL check failed")
+                await send_or_edit_text(update, f"Không lấy được điểm rèn luyện: {exc}")
+                return
+            await query.answer()
+            formatted = format_drl_summary(records)
+            back_markup = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Quay lại", callback_data="menu:main")]])
+            await send_or_edit_html(update, formatted, reply_markup=back_markup)
             return
 
         if data == "menu:schedule":
@@ -1640,6 +1678,7 @@ async def post_init(application) -> None:
             BotCommand("info", "Thông tin cá nhân"),
             BotCommand("check", "Xem điểm"),
             BotCommand("gpa", "Xem GPA"),
+            BotCommand("drl", "Xem điểm rèn luyện"),
             BotCommand("setting", "Cài đặt bot"),
             BotCommand("logout", "Đăng xuất tài khoản"),
         ]
@@ -1660,6 +1699,7 @@ def main() -> None:
     app.add_handler(CommandHandler("info", info_command))
     app.add_handler(CommandHandler("check", check_command))
     app.add_handler(CommandHandler("gpa", gpa_command))
+    app.add_handler(CommandHandler("drl", drl_command))
     app.add_handler(CommandHandler("setting", setting_command))
     app.add_handler(CallbackQueryHandler(callback_selection))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_selection))

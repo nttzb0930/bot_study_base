@@ -137,8 +137,11 @@ def format_gpa_summary(records: list[dict], title: str = "GPA / Điểm trung b�
         cumulative_10 = record.get("TC_SV_KetQuaHocTap_DiemTrungBinhTichLuy")
         cumulative_4 = record.get("TC_SV_KetQuaHocTap_DiemTrungBinhTichLuy_He4")
         registered_credits = record.get("TC_SV_KetQuaHocTap_TongTinChi_DangKy")
+        semester_accumulated_credits = record.get("TC_SV_KetQuaHocTap_TongTinChi_TichLuyHocKy")
         accumulated_credits = record.get("TC_SV_KetQuaHocTap_TongTinChi_TichLuy")
         debt_credits = record.get("TC_SV_KetQuaHocTap_TongTinChi_No")
+        drl = record.get("TC_SV_KetQuaHocTap_DiemRenLuyen")
+        drl_rank = record.get("TC_SV_KetQuaHocTap_DiemRenLuyen_XepLoai")
         rank = record.get("TC_SV_KetQuaHocTap_XepLoaiHocLuc_TichLuy")
 
         lines.extend(
@@ -150,8 +153,11 @@ def format_gpa_summary(records: list[dict], title: str = "GPA / Điểm trung b�
                 f"TB tích lũy hệ 10: {cumulative_10 if cumulative_10 is not None else '-'}",
                 f"TB tích lũy hệ 4: {cumulative_4 if cumulative_4 is not None else '-'}",
                 f"Tín chỉ đăng ký: {registered_credits if registered_credits is not None else '-'}",
+                f"Tích lũy học kỳ: {semester_accumulated_credits if semester_accumulated_credits is not None else '-'}",
                 f"Tín chỉ tích lũy: {accumulated_credits if accumulated_credits is not None else '-'}",
                 f"Tín chỉ nợ: {debt_credits if debt_credits is not None else '-'}",
+                f"Điểm rèn luyện: {drl if drl is not None else '-'}",
+                f"Xếp loại rèn luyện: {drl_rank if drl_rank is not None else '-'}",
                 f"Xếp loại tích lũy: {rank or '-'}",
             ]
         )
@@ -173,17 +179,39 @@ def format_gpa_summary_table(records: list[dict], title: str = "GPA / Điểm tr
             ("TB tích lũy hệ 10", record.get("TC_SV_KetQuaHocTap_DiemTrungBinhTichLuy")),
             ("TB tích lũy hệ 4", record.get("TC_SV_KetQuaHocTap_DiemTrungBinhTichLuy_He4")),
             ("Tín chỉ đăng ký", record.get("TC_SV_KetQuaHocTap_TongTinChi_DangKy")),
+            ("Tích lũy học kỳ", record.get("TC_SV_KetQuaHocTap_TongTinChi_TichLuyHocKy")),
             ("Tín chỉ tích lũy", record.get("TC_SV_KetQuaHocTap_TongTinChi_TichLuy")),
             ("Tín chỉ nợ", record.get("TC_SV_KetQuaHocTap_TongTinChi_No")),
+            ("Điểm rèn luyện", record.get("TC_SV_KetQuaHocTap_DiemRenLuyen")),
+            ("Xếp loại rèn luyện", record.get("TC_SV_KetQuaHocTap_DiemRenLuyen_XepLoai")),
             ("Xếp loại tích lũy", record.get("TC_SV_KetQuaHocTap_XepLoaiHocLuc_TichLuy")),
         ]
 
         lines.extend(["", "-" * min(len(str(term)) + 8, 32)])
         for label, value in rows:
             display_value = "-" if value is None or value == "" else str(value)
-            lines.append(f"{label:<18}: {display_value}")
+            lines.append(f"{label:<20}: {display_value}")
 
     return "\n".join(lines)
+
+
+def format_drl_summary(records: list[dict]) -> str:
+    if not records:
+        return "❌ Không tìm thấy dữ liệu điểm rèn luyện."
+
+    lines = ["📝 <b>BẢNG ĐIỂM RÈN LUYỆN CÁC HỌC KỲ</b>", ""]
+    for record in records:
+        term = record.get("TC_SV_KetQuaHocTap_TenDot") or "-"
+        drl = record.get("TC_SV_KetQuaHocTap_DiemRenLuyen")
+        drl_str = "-" if drl is None else str(drl)
+        drl_rank = record.get("TC_SV_KetQuaHocTap_DiemRenLuyen_XepLoai") or "-"
+
+        lines.append(f"📌 <b>Học kỳ {term}</b>")
+        lines.append(f"• Điểm rèn luyện: <code>{drl_str}</code>")
+        lines.append(f"• Xếp loại: <code>{drl_rank}</code>")
+        lines.append("--------------------")
+
+    return "\n".join(lines[:-1])
 
 
 def get_gpa_summary(telegram_user_id: str = "default") -> str:
