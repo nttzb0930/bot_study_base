@@ -278,7 +278,6 @@ def format_score_row_detail(row: dict) -> str:
     coefficient_1_scores = _format_values(
         row,
         [
-            "TC_SV_KetQuaHocTap_DiemChuyenCan_LyThuyet",
             "TC_SV_KetQuaHocTap_DiemHeSo11",
             "TC_SV_KetQuaHocTap_DiemHeSo12",
             "TC_SV_KetQuaHocTap_DiemHeSo13",
@@ -329,12 +328,15 @@ def format_score_row_detail(row: dict) -> str:
     note_1 = row.get("TC_SV_KetQuaHocTap_GhiChu1") or "-"
     note_2 = row.get("TC_SV_KetQuaHocTap_GhiChu2") or "-"
 
+    theory_attendance = row.get("TC_SV_KetQuaHocTap_DiemChuyenCan_LyThuyet")
+    theory_attendance_str = "-" if theory_attendance is None or theory_attendance == "" else str(theory_attendance).strip()
+
     return "\n".join(
         [
             f"{subject}",
             f"  Mã môn: {subject_code} | Lớp HP: {class_code}",
             f"  Học kỳ: {term} | Tín chỉ: {credits if credits is not None else '-'} | Loại: {subject_type}",
-            f"  Điểm danh: {attendance if attendance is not None else '-'} | Xét dự thi: {allowed_exam if allowed_exam is not None else '-'} | Không tính TBC: {not_counted}",
+            f"  Điểm danh: {attendance if attendance is not None else '-'} | Chuyên cần LT: {theory_attendance_str} | Xét dự thi: {allowed_exam if allowed_exam is not None else '-'} | Không tính TBC: {not_counted}",
             f"  Thực hành: {practice_scores} | TB TH: {practice_average if practice_average is not None else '-'}",
             f"  Hệ số 1: {coefficient_1_scores}",
             f"  Hệ số 2: {coefficient_2_scores}",
@@ -373,7 +375,6 @@ def format_score_row_detail_table(row: dict) -> str:
     coefficient_1_scores = _format_values(
         row,
         [
-            "TC_SV_KetQuaHocTap_DiemChuyenCan_LyThuyet",
             "TC_SV_KetQuaHocTap_DiemHeSo11",
             "TC_SV_KetQuaHocTap_DiemHeSo12",
             "TC_SV_KetQuaHocTap_DiemHeSo13",
@@ -407,6 +408,7 @@ def format_score_row_detail_table(row: dict) -> str:
         ("Tín chỉ", "-" if credits is None else credits),
         ("Loại", subject_type),
         ("Điểm danh", row.get("TC_SV_KetQuaHocTap_DiemDanh")),
+        ("Chuyên cần LT", row.get("TC_SV_KetQuaHocTap_DiemChuyenCan_LyThuyet")),
         ("Xét dự thi", row.get("TC_SV_KetQuaHocTap_XetDuThi")),
         ("Không TBC", row.get("TC_SV_KetQuaHocTap_KhongTinhDiemTBC")),
         ("Thực hành", practice_scores),
@@ -426,7 +428,7 @@ def format_score_row_detail_table(row: dict) -> str:
     lines = [subject, "-" * min(len(subject), 32)]
     for label, value in rows:
         display_value = "-" if value is None or value == "" else str(value)
-        lines.append(f"{label:<12}: {display_value}")
+        lines.append(f"{label:<15}: {display_value}")
 
     return "\n".join(lines)
 
