@@ -249,6 +249,102 @@ def _format_values(row: dict, keys: list[str]) -> str:
     return ", ".join(values) if values else "-"
 
 
+def calculate_regular_average(row: dict) -> float | None:
+    # Try to get existing value first
+    reg_avg = row.get("TC_SV_KetQuaHocTap_DiemTBThuongKy")
+    if reg_avg is not None and str(reg_avg).strip() != "":
+        try:
+            return float(str(reg_avg).replace(",", "."))
+        except (ValueError, TypeError):
+            pass
+
+    # Fallback to manual calculation
+    try:
+        stc_val = row.get("TC_SV_KetQuaHocTap_SoTinChi")
+        stc = int(stc_val) if stc_val is not None and str(stc_val).strip() != "" else None
+    except (ValueError, TypeError):
+        stc = None
+
+    # Parse attendance score
+    cc_val = row.get("TC_SV_KetQuaHocTap_DiemChuyenCan_LyThuyet")
+    if cc_val is None or str(cc_val).strip() == "":
+        cc_val = row.get("TC_SV_KetQuaHocTap_DiemDanh")
+
+    cc = None
+    if cc_val is not None and str(cc_val).strip() != "":
+        try:
+            cc = float(str(cc_val).replace(",", "."))
+        except (ValueError, TypeError):
+            pass
+
+    # Parse coefficient 1 scores
+    hs1 = []
+    for i in range(1, 10):
+        val = row.get(f"TC_SV_KetQuaHocTap_DiemHeSo1{i}")
+        if val is not None and str(val).strip() != "":
+            try:
+                hs1.append(float(str(val).replace(",", ".")))
+            except (ValueError, TypeError):
+                pass
+
+    # Parse coefficient 2 scores
+    hs2 = []
+    for i in range(1, 10):
+        val = row.get(f"TC_SV_KetQuaHocTap_DiemHeSo2{i}")
+        if val is not None and str(val).strip() != "":
+            try:
+                hs2.append(float(str(val).replace(",", ".")))
+            except (ValueError, TypeError):
+                pass
+
+    numerator = 0.0
+    denominator = 0.0
+
+    if cc is not None and stc is not None:
+        numerator += cc * stc
+        denominator += stc
+
+    numerator += sum(hs1)
+    denominator += len(hs1)
+
+    numerator += sum(hs2) * 2
+    denominator += len(hs2) * 2
+
+    if denominator > 0:
+        return numerator / denominator
+    return None
+
+
+def format_score_predictions(row: dict) -> str:
+    regular_average = calculate_regular_average(row)
+    if regular_average is None:
+        return "Dự đoán điểm thi cần đạt:\n  • Chưa đủ dữ liệu điểm thường kỳ"
+
+    lines = [
+        "Dự đoán điểm thi cần đạt:",
+    ]
+    for grade_name, threshold in [
+        ("Qua môn (D)", 4.0),
+        ("Đạt D+", 4.8),
+        ("Đạt C", 5.5),
+        ("Đạt C+", 6.3),
+        ("Đạt B", 7.0),
+        ("Đạt B+", 7.8),
+        ("Đạt A", 8.5),
+    ]:
+        # Điểm thi = (threshold - regular_average * 0.4) / 0.6
+        req = (threshold - regular_average * 0.4) / 0.6
+        if req <= 0:
+            status = "0.0 (Đủ điểm)"
+        elif req > 10:
+            status = "Không thể"
+        else:
+            status = f"{req:.2f}"
+        lines.append(f"  • {grade_name:<12}: {status}")
+
+    return "\n".join(lines)
+
+
 def format_score_row_detail(row: dict) -> str:
     subject = row.get("TC_SV_KetQuaHocTap_TenMonHoc") or "Không rõ môn"
     subject_code = row.get("TC_SV_KetQuaHocTap_MaMonHoc") or "-"
@@ -331,6 +427,9 @@ def format_score_row_detail(row: dict) -> str:
     theory_attendance = row.get("TC_SV_KetQuaHocTap_DiemChuyenCan_LyThuyet")
     theory_attendance_str = "-" if theory_attendance is None or theory_attendance == "" else str(theory_attendance).strip()
 
+    predictions = format_score_predictions(row)
+    predictions_indented = "\n".join(f"  {line}" for line in predictions.splitlines())
+
     return "\n".join(
         [
             f"{subject}",
@@ -345,6 +444,8 @@ def format_score_row_detail(row: dict) -> str:
             f"  Tổng kết: {final_score if final_score is not None else '-'} | TK1: {final_score_1 if final_score_1 is not None else '-'} | TK2: {final_score_2 if final_score_2 is not None else '-'}",
             f"  Tín chỉ: {credit_score if credit_score is not None else '-'} | Chữ: {letter_score} | Xếp loại: {rank} | Vắng thi: {absent_exam}",
             f"  Ghi chú: {note_1} {note_2}",
+            f"  --------------------------------",
+            predictions_indented,
         ]
     )
 
@@ -429,6 +530,10 @@ def format_score_row_detail_table(row: dict) -> str:
     for label, value in rows:
         display_value = "-" if value is None or value == "" else str(value)
         lines.append(f"{label:<15}: {display_value}")
+
+    predictions = format_score_predictions(row)
+    lines.append("-" * 32)
+    lines.append(predictions)
 
     return "\n".join(lines)
 
