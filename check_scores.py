@@ -316,6 +316,10 @@ def calculate_regular_average(row: dict) -> float | None:
 
 
 def format_score_predictions(row: dict) -> str:
+    subject_type = row.get("TC_SV_KetQuaHocTap_TenLoaiMonHoc") or ""
+    if any(t in subject_type for t in ["Thực hành", "Thực tập", "Đồ án", "Khóa luận"]):
+        return "Dự đoán điểm thi cần đạt:\n  • Không áp dụng cho môn Thực hành/Đồ án/Thực tập"
+
     regular_average = calculate_regular_average(row)
     if regular_average is None:
         return "Dự đoán điểm thi cần đạt:\n  • Chưa đủ dữ liệu điểm thường kỳ"
