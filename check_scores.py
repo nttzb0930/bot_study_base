@@ -134,7 +134,7 @@ def notify_admin_relogin() -> None:
             logger.exception("Failed to send relogin notification to admin: %s", e)
 
 
-def handle_token_failure(user_id: str, exc: Exception) -> None:
+def handle_token_failure(user_id: str, exc: Exception) -> bool:
     is_auth_error = False
     if hasattr(exc, "response") and exc.response is not None:
         if exc.response.status_code in (400, 401, 403):
@@ -162,6 +162,8 @@ def handle_token_failure(user_id: str, exc: Exception) -> None:
             if user_id == admin_str:
                 logger.warning("Admin token failed with authentication error. Removing from pool and notifying admin.")
                 notify_admin_relogin()
+
+    return is_auth_error
 
 
 def parse_json_response(response: Response, action: str) -> dict:
@@ -255,8 +257,10 @@ def get_scores(telegram_user_id: str = "default") -> list[dict]:
         set_cached_data("scores", student_id, result)
         return result
     except Exception as exc:
-        handle_token_failure(str(telegram_user_id), exc)
-        raise KeyError("Phiên đăng nhập đã hết hạn hoặc bị lỗi xác thực. Vui lòng đăng nhập lại.") from exc
+        is_auth = handle_token_failure(str(telegram_user_id), exc)
+        if is_auth:
+            raise KeyError("Phiên đăng nhập đã hết hạn hoặc bị lỗi xác thực. Vui lòng đăng nhập lại.") from exc
+        raise exc
 
 
 def get_gpa_records(telegram_user_id: str = "default") -> list[dict]:
@@ -287,8 +291,10 @@ def get_gpa_records(telegram_user_id: str = "default") -> list[dict]:
         set_cached_data("gpa", student_id, result)
         return result
     except Exception as exc:
-        handle_token_failure(str(telegram_user_id), exc)
-        raise KeyError("Phiên đăng nhập đã hết hạn hoặc bị lỗi xác thực. Vui lòng đăng nhập lại.") from exc
+        is_auth = handle_token_failure(str(telegram_user_id), exc)
+        if is_auth:
+            raise KeyError("Phiên đăng nhập đã hết hạn hoặc bị lỗi xác thực. Vui lòng đăng nhập lại.") from exc
+        raise exc
 
 
 def format_gpa_summary(records: list[dict], title: str = "GPA / Điểm trung bình") -> str:
@@ -729,8 +735,10 @@ def get_schedules(telegram_user_id: str = "default") -> list[dict]:
         data = parse_json_response(response, "Lấy lịch học")
         return data.get("body", [])
     except Exception as exc:
-        handle_token_failure(str(telegram_user_id), exc)
-        raise KeyError("Phiên đăng nhập đã hết hạn hoặc bị lỗi xác thực. Vui lòng đăng nhập lại.") from exc
+        is_auth = handle_token_failure(str(telegram_user_id), exc)
+        if is_auth:
+            raise KeyError("Phiên đăng nhập đã hết hạn hoặc bị lỗi xác thực. Vui lòng đăng nhập lại.") from exc
+        raise exc
 
 
 def get_exam_schedules(telegram_user_id: str = "default") -> list[dict]:
@@ -754,8 +762,10 @@ def get_exam_schedules(telegram_user_id: str = "default") -> list[dict]:
         data = parse_json_response(response, "Lấy lịch thi")
         return data.get("body", [])
     except Exception as exc:
-        handle_token_failure(str(telegram_user_id), exc)
-        raise KeyError("Phiên đăng nhập đã hết hạn hoặc bị lỗi xác thực. Vui lòng đăng nhập lại.") from exc
+        is_auth = handle_token_failure(str(telegram_user_id), exc)
+        if is_auth:
+            raise KeyError("Phiên đăng nhập đã hết hạn hoặc bị lỗi xác thực. Vui lòng đăng nhập lại.") from exc
+        raise exc
 
 
 def get_student_profile(telegram_user_id: str) -> dict | None:
@@ -788,8 +798,10 @@ def get_student_profile(telegram_user_id: str) -> dict | None:
         set_cached_data("profile", student_id, result)
         return result
     except Exception as exc:
-        handle_token_failure(str(telegram_user_id), exc)
-        raise KeyError("Phiên đăng nhập đã hết hạn hoặc bị lỗi xác thực. Vui lòng đăng nhập lại.") from exc
+        is_auth = handle_token_failure(str(telegram_user_id), exc)
+        if is_auth:
+            raise KeyError("Phiên đăng nhập đã hết hạn hoặc bị lỗi xác thực. Vui lòng đăng nhập lại.") from exc
+        raise exc
 
 
 def get_scores_by_mssv(student_id: str) -> list[dict]:

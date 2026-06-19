@@ -111,17 +111,22 @@ def get_existing_login_status(telegram_user_id: str) -> str | None:
     if not is_jwt_expired(token):
         return "valid"
 
-    if is_jwt_expired(refresh_token_value):
+    # Do not locally check if the refresh token is expired (e.g. using is_jwt_expired).
+    # The school API's refresh token may contain an 'exp' claim of 24h, but the school's
+    # server actually accepts it for a much longer period. We let the server determine
+    # if the refresh token is valid by making the API call directly.
+    try:
+        new_token_data = refresh_token(refresh_token_value)
+        token_info["token"] = new_token_data["token"]
+        if new_token_data.get("refreshToken"):
+            token_info["refreshToken"] = new_token_data["refreshToken"]
+
+        tokens[str(telegram_user_id)] = token_info
+        save_tokens(tokens)
+        return "refreshed"
+    except Exception as e:
+        print(f"Failed to refresh token for {telegram_user_id}: {e}")
         return None
-
-    new_token_data = refresh_token(refresh_token_value)
-    token_info["token"] = new_token_data["token"]
-    if new_token_data.get("refreshToken"):
-        token_info["refreshToken"] = new_token_data["refreshToken"]
-
-    tokens[str(telegram_user_id)] = token_info
-    save_tokens(tokens)
-    return "refreshed"
 
 
 def main() -> None:
