@@ -1066,7 +1066,7 @@ async def find_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await send_long_message(update, "Mã sinh viên phải là định dạng số.")
         return
 
-    await send_long_message(update, f"🔍 Đang tra cứu thông tin cho MSSV: <code>{target_mssv}</code>...")
+    await send_long_html_message(update, f"🔍 Đang tra cứu thông tin cho MSSV: <code>{target_mssv}</code>...")
 
     try:
         profile = await asyncio.to_thread(get_student_profile_by_mssv, target_mssv)
@@ -1079,7 +1079,7 @@ async def find_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     if not profile:
-        await send_long_message(update, f"❌ Không tìm thấy sinh viên có MSSV: <code>{target_mssv}</code>")
+        await send_long_html_message(update, f"❌ Không tìm thấy sinh viên có MSSV: <code>{target_mssv}</code>")
         return
 
     set_check_context(user_id, {"target_mssv": target_mssv, "stage": "find_menu"})

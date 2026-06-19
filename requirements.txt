@@ -7,4 +7,4 @@ dnspython
 fastapi
 uvicorn
 certifi
-
+redis

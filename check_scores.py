@@ -4,6 +4,10 @@ import sys
 from pathlib import Path
 from urllib.parse import quote
 
+import time
+import logging
+import redis
+
 import requests
 from dotenv import load_dotenv
 from requests import Response
@@ -16,6 +20,77 @@ from db import TOKEN_FILE, load_tokens, save_tokens
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
+
+
+logger = logging.getLogger(__name__)
+
+# Redis Connection Setup with Graceful Fallback
+REDIS_URL = os.getenv("REDIS_URL")
+if REDIS_URL:
+    REDIS_URL = REDIS_URL.strip('\'"')
+redis_client = None
+
+if REDIS_URL:
+    try:
+        redis_client = redis.from_url(
+            REDIS_URL,
+            socket_timeout=2.0,
+            socket_connect_timeout=2.0,
+            decode_responses=True
+        )
+        redis_client.ping()
+        logger.info("Connected to Redis successfully for caching.")
+    except Exception as exc:
+        logger.warning("Redis configured but connection failed: %s. Falling back to In-Memory cache.", exc)
+        redis_client = None
+
+# Caching configuration and memory storage
+CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "300"))
+_API_CACHE = {
+    "scores": {},       # student_id -> {"data": ..., "timestamp": ...}
+    "gpa": {},          # student_id -> {"data": ..., "timestamp": ...}
+    "profile": {},      # student_id -> {"data": ..., "timestamp": ...}
+}
+
+def get_cached_data(cache_type: str, student_id: str):
+    key = f"uneti:cache:{cache_type}:{student_id}"
+
+    # Try Redis first
+    if redis_client:
+        try:
+            cached_val = redis_client.get(key)
+            if cached_val is not None:
+                return json.loads(cached_val)
+        except Exception as exc:
+            logger.warning("Failed to get cache from Redis: %s. Trying In-Memory fallback.", exc)
+
+    # In-memory fallback
+    entry = _API_CACHE.get(cache_type, {}).get(student_id)
+    if entry:
+        if time.time() - entry["timestamp"] < CACHE_TTL_SECONDS:
+            return entry["data"]
+        else:
+            _API_CACHE[cache_type].pop(student_id, None)
+    return None
+
+def set_cached_data(cache_type: str, student_id: str, data) -> None:
+    key = f"uneti:cache:{cache_type}:{student_id}"
+
+    # Try Redis first
+    if redis_client:
+        try:
+            redis_client.setex(key, CACHE_TTL_SECONDS, json.dumps(data))
+            return
+        except Exception as exc:
+            logger.warning("Failed to set cache in Redis: %s. Storing In-Memory.", exc)
+
+    # In-memory fallback
+    if cache_type not in _API_CACHE:
+        _API_CACHE[cache_type] = {}
+    _API_CACHE[cache_type][student_id] = {
+        "data": data,
+        "timestamp": time.time()
+    }
 
 
 
@@ -91,6 +166,11 @@ def get_scores(telegram_user_id: str = "default") -> list[dict]:
     tokens = load_tokens()
     token_info = tokens[str(telegram_user_id)]
     student_id = token_info["username"]
+    
+    cached = get_cached_data("scores", student_id)
+    if cached is not None:
+        return cached
+
     encoded_student_id = quote(student_id)
 
     url = (
@@ -103,13 +183,20 @@ def get_scores(telegram_user_id: str = "default") -> list[dict]:
     save_tokens(tokens)
 
     data = parse_json_response(response, "Lấy điểm")
-    return data.get("body", [])
+    result = data.get("body", [])
+    set_cached_data("scores", student_id, result)
+    return result
 
 
 def get_gpa_records(telegram_user_id: str = "default") -> list[dict]:
     tokens = load_tokens()
     token_info = tokens[str(telegram_user_id)]
     student_id = token_info["username"]
+    
+    cached = get_cached_data("gpa", student_id)
+    if cached is not None:
+        return cached
+
     encoded_student_id = quote(student_id)
 
     url = (
@@ -122,7 +209,9 @@ def get_gpa_records(telegram_user_id: str = "default") -> list[dict]:
     save_tokens(tokens)
 
     data = parse_json_response(response, "Lấy GPA")
-    return data.get("body", [])
+    result = data.get("body", [])
+    set_cached_data("gpa", student_id, result)
+    return result
 
 
 def format_gpa_summary(records: list[dict], title: str = "GPA / Điểm trung bình") -> str:
@@ -587,6 +676,11 @@ def get_student_profile(telegram_user_id: str) -> dict | None:
         raise KeyError("User not logged in")
 
     student_id = token_info["username"]
+    
+    cached = get_cached_data("profile", student_id)
+    if cached is not None:
+        return cached
+
     from login import cryptojs_aes_encrypt
     payload = {
         "TC_SV_MaSinhVien": cryptojs_aes_encrypt(student_id)
@@ -598,12 +692,18 @@ def get_student_profile(telegram_user_id: str) -> dict | None:
     
     data = parse_json_response(response, "Lấy thông tin sinh viên")
     body = data.get("body", [])
+    result = None
     if body and isinstance(body, list):
-        return body[0]
-    return None
+        result = body[0]
+    set_cached_data("profile", student_id, result)
+    return result
 
 
 def get_scores_by_mssv(student_id: str) -> list[dict]:
+    cached = get_cached_data("scores", student_id)
+    if cached is not None:
+        return cached
+
     tokens = load_tokens()
     if not tokens:
         raise KeyError("No users logged in")
@@ -621,10 +721,16 @@ def get_scores_by_mssv(student_id: str) -> list[dict]:
     save_tokens(tokens)
 
     data = parse_json_response(response, "Lấy điểm")
-    return data.get("body", [])
+    result = data.get("body", [])
+    set_cached_data("scores", student_id, result)
+    return result
 
 
 def get_gpa_records_by_mssv(student_id: str) -> list[dict]:
+    cached = get_cached_data("gpa", student_id)
+    if cached is not None:
+        return cached
+
     tokens = load_tokens()
     if not tokens:
         raise KeyError("No users logged in")
@@ -642,10 +748,16 @@ def get_gpa_records_by_mssv(student_id: str) -> list[dict]:
     save_tokens(tokens)
 
     data = parse_json_response(response, "Lấy GPA")
-    return data.get("body", [])
+    result = data.get("body", [])
+    set_cached_data("gpa", student_id, result)
+    return result
 
 
 def get_student_profile_by_mssv(student_id: str) -> dict | None:
+    cached = get_cached_data("profile", student_id)
+    if cached is not None:
+        return cached
+
     tokens = load_tokens()
     if not tokens:
         raise KeyError("No active tokens in pool")
@@ -663,9 +775,11 @@ def get_student_profile_by_mssv(student_id: str) -> dict | None:
     
     data = parse_json_response(response, "Lấy thông tin sinh viên")
     body = data.get("body", [])
+    result = None
     if body and isinstance(body, list):
-        return body[0]
-    return None
+        result = body[0]
+    set_cached_data("profile", student_id, result)
+    return result
 
 
 def main() -> None:
