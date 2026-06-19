@@ -87,7 +87,7 @@ async def index():
     return {"status": "ok", "message": "Telegram Bot is running"}
 
 
-@app.get("/api/cron")
+@app.api_route("/api/cron", methods=["GET", "HEAD"])
 async def cron_check_scores(request: Request, secret: str = None):
     cron_secret = os.environ.get("CRON_SECRET")
     if cron_secret:
