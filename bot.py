@@ -28,6 +28,9 @@ from check_scores import (
     get_exam_schedules,
     get_student_profile,
     format_drl_summary,
+    get_scores_by_mssv,
+    get_gpa_records_by_mssv,
+    get_student_profile_by_mssv,
 )
 from login import get_existing_login_status, login as uneti_login, save_login
 from db import load_user_settings, save_user_settings, delete_user_login, load_tokens, save_tokens
@@ -49,7 +52,11 @@ AUTO_DELETE_MESSAGES_SECONDS = int(os.getenv("AUTO_DELETE_MESSAGES_SECONDS", "30
 
 
 def set_check_context(user_id: str, data: dict) -> None:
+    old = USER_CHECK_CONTEXT.get(user_id, {})
+    target_mssv = data.get("target_mssv") or old.get("target_mssv")
     USER_CHECK_CONTEXT[user_id] = {**data, "updated_at": time.time()}
+    if target_mssv:
+        USER_CHECK_CONTEXT[user_id]["target_mssv"] = target_mssv
 
 
 def get_check_context(user_id: str) -> dict:
@@ -106,6 +113,22 @@ def clear_all_contexts(user_id: str) -> None:
     clear_login_context(user_id)
     clear_check_context(user_id)
     clear_setting_context(user_id)
+
+
+async def get_scores_helper(user_id: str) -> list[dict]:
+    ctx = get_check_context(user_id)
+    target_mssv = ctx.get("target_mssv")
+    if target_mssv:
+        return await asyncio.to_thread(get_scores_by_mssv, target_mssv)
+    return await asyncio.to_thread(get_scores, user_id)
+
+
+async def get_gpa_records_helper(user_id: str) -> list[dict]:
+    ctx = get_check_context(user_id)
+    target_mssv = ctx.get("target_mssv")
+    if target_mssv:
+        return await asyncio.to_thread(get_gpa_records_by_mssv, target_mssv)
+    return await asyncio.to_thread(get_gpa_records, user_id)
 
 
 def is_reply_to_message(update: Update, message_id: int | None) -> bool:
@@ -565,13 +588,16 @@ def format_student_profile(profile: dict) -> str:
     )
 
 
-def year_keyboard(rows: list[dict]) -> InlineKeyboardMarkup:
+def year_keyboard(rows: list[dict], target_mssv: str = None) -> InlineKeyboardMarkup:
     buttons = []
     for year in available_years(rows):
         count = len(rows_for_year(rows, year))
         buttons.append([InlineKeyboardButton(f"🗓️ {year}-{year + 1} ({count})", callback_data=f"year:{year}")])
     buttons.append([InlineKeyboardButton("📚 Tất cả môn", callback_data="all")])
-    buttons.append([InlineKeyboardButton("⬅️ Quay lại", callback_data="menu:main")])
+    if target_mssv:
+        buttons.append([InlineKeyboardButton("⬅️ Quay lại", callback_data=f"find:profile:{target_mssv}")])
+    else:
+        buttons.append([InlineKeyboardButton("⬅️ Quay lại", callback_data="menu:main")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -655,12 +681,15 @@ def gpa_records_for_year(records: list[dict], year: int) -> list[dict]:
     return [record for record in records if gpa_year(record) == year]
 
 
-def gpa_menu_keyboard(records: list[dict]) -> InlineKeyboardMarkup:
+def gpa_menu_keyboard(records: list[dict], target_mssv: str = None) -> InlineKeyboardMarkup:
     buttons = [[InlineKeyboardButton("📈 GPA hiện tại", callback_data="gpa:current")]]
     for year in available_gpa_years(records):
         count = len(gpa_records_for_year(records, year))
         buttons.append([InlineKeyboardButton(f"🗓️ {year}-{year + 1} ({count} học kỳ)", callback_data=f"gpa:year:{year}")])
-    buttons.append([InlineKeyboardButton("⬅️ Quay lại", callback_data="menu:main")])
+    if target_mssv:
+        buttons.append([InlineKeyboardButton("⬅️ Quay lại", callback_data=f"find:profile:{target_mssv}")])
+    else:
+        buttons.append([InlineKeyboardButton("⬅️ Quay lại", callback_data="menu:main")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -932,7 +961,7 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user_id = str(update.effective_user.id)
     clear_all_contexts(user_id)
     try:
-        rows = await asyncio.to_thread(get_scores, user_id)
+        rows = await get_scores_helper(user_id)
     except KeyError:
         await prompt_login_credentials(update, user_id)
         return
@@ -1021,6 +1050,76 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await send_long_html_message(update, format_detail_table_html(matched_rows[0]))
 
 
+async def find_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_user:
+        return
+
+    user_id = str(update.effective_user.id)
+    clear_all_contexts(user_id)
+
+    if not context.args:
+        await send_long_message(update, "Vui lòng nhập MSSV cần tra cứu.\nCú pháp: `/find <MSSV>`")
+        return
+
+    target_mssv = context.args[0].strip()
+    if not target_mssv.isdigit():
+        await send_long_message(update, "Mã sinh viên phải là định dạng số.")
+        return
+
+    await send_long_message(update, f"🔍 Đang tra cứu thông tin cho MSSV: <code>{target_mssv}</code>...")
+
+    try:
+        profile = await asyncio.to_thread(get_student_profile_by_mssv, target_mssv)
+    except KeyError:
+        await send_long_message(update, "❌ Không có token hoạt động nào trong hệ thống để thực hiện tra cứu. Hãy đăng nhập ít nhất một tài khoản trước.")
+        return
+    except Exception as exc:
+        logger.exception("Find profile failed")
+        await send_long_message(update, f"❌ Không lấy được thông tin sinh viên: {exc}")
+        return
+
+    if not profile:
+        await send_long_message(update, f"❌ Không tìm thấy sinh viên có MSSV: <code>{target_mssv}</code>")
+        return
+
+    set_check_context(user_id, {"target_mssv": target_mssv, "stage": "find_menu"})
+
+    formatted = format_student_profile(profile)
+    try:
+        gpa_records = await asyncio.to_thread(get_gpa_records_by_mssv, target_mssv)
+        if gpa_records:
+            latest = gpa_records[0]
+            gpa_tich_luy = latest.get("TC_SV_KetQuaHocTap_DiemTrungBinhTichLuyHe10", "-")
+            gpa_tin_chi = latest.get("TC_SV_KetQuaHocTap_DiemTrungBinhTichLuyHe4", "-")
+            tin_chi_tich_luy = latest.get("TC_SV_KetQuaHocTap_TongSoTinChiTichLuy", "-")
+            drl_tich_luy = latest.get("TC_SV_KetQuaHocTap_DiemRenLuyen", "-")
+            
+            summary_text = (
+                f"\n\n📊 <b>TÓM TẮT HỌC TẬP TÍCH LŨY</b>\n"
+                f"• <b>Tích lũy hệ 10:</b> <code>{gpa_tich_luy}</code>\n"
+                f"• <b>Tích lũy hệ 4:</b> <code>{gpa_tin_chi}</code>\n"
+                f"• <b>Tín chỉ tích lũy:</b> <code>{tin_chi_tich_luy}</code>\n"
+                f"• <b>Điểm rèn luyện gần nhất:</b> <code>{drl_tich_luy}</code>"
+            )
+            formatted += summary_text
+    except Exception:
+        pass
+
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("📊 Bảng điểm", callback_data=f"find:scores:{target_mssv}"),
+                InlineKeyboardButton("📈 Điểm GPA", callback_data=f"find:gpa:{target_mssv}"),
+            ],
+            [
+                InlineKeyboardButton("❌ Đóng", callback_data="close_menu")
+            ]
+        ]
+    )
+
+    await send_or_edit_html(update, formatted, reply_markup=keyboard)
+
+
 async def gpa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user:
         return
@@ -1028,7 +1127,7 @@ async def gpa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     user_id = str(update.effective_user.id)
     clear_all_contexts(user_id)
     try:
-        records = await asyncio.to_thread(get_gpa_records, user_id)
+        records = await get_gpa_records_helper(user_id)
     except KeyError:
         await prompt_login_credentials(update, user_id)
         return
@@ -1062,7 +1161,7 @@ async def drl_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     user_id = str(update.effective_user.id)
     clear_all_contexts(user_id)
     try:
-        records = await asyncio.to_thread(get_gpa_records, user_id)
+        records = await get_gpa_records_helper(user_id)
     except KeyError:
         await prompt_login_credentials(update, user_id)
         return
@@ -1109,6 +1208,9 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
         clear_login_context(user_id)
         clear_check_context(user_id)
         clear_setting_context(user_id)
+    elif data.startswith("find:"):
+        clear_login_context(user_id)
+        clear_setting_context(user_id)
     elif any(
         data.startswith(p)
         for p in ["back:years", "all", "year:", "semester:", "subject:", "back:semesters:", "back:subjects", "subjects:page:"]
@@ -1123,6 +1225,77 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
         except Exception:
             pass
         return
+
+    if data.startswith("find:"):
+        parts = data.split(":")
+        action = parts[1]
+        target_mssv = parts[2]
+        
+        if action == "scores":
+            set_check_context(user_id, {"stage": "years", "target_mssv": target_mssv})
+            try:
+                rows = await asyncio.to_thread(get_scores_by_mssv, target_mssv)
+            except Exception as exc:
+                await query.answer(text="Lỗi lấy điểm!")
+                await send_or_edit_text(update, f"Không lấy được điểm: {exc}")
+                return
+            await query.answer()
+            await send_or_edit_text(update, "Chọn năm học:", reply_markup=year_keyboard(rows, target_mssv=target_mssv))
+            return
+            
+        elif action == "gpa":
+            set_check_context(user_id, {"target_mssv": target_mssv})
+            try:
+                records = await asyncio.to_thread(get_gpa_records_by_mssv, target_mssv)
+            except Exception as exc:
+                await query.answer(text="Lỗi lấy GPA!")
+                await send_or_edit_text(update, f"Không lấy được GPA: {exc}")
+                return
+            await query.answer()
+            await send_or_edit_text(update, "Chọn kiểu xem GPA:", reply_markup=gpa_menu_keyboard(records, target_mssv=target_mssv))
+            return
+
+        elif action == "profile":
+            clear_all_contexts(user_id)
+            set_check_context(user_id, {"target_mssv": target_mssv, "stage": "find_menu"})
+            try:
+                profile = await asyncio.to_thread(get_student_profile_by_mssv, target_mssv)
+                gpa_records = await asyncio.to_thread(get_gpa_records_by_mssv, target_mssv)
+            except Exception as exc:
+                await query.answer(text="Lỗi tải profile!")
+                await send_or_edit_text(update, f"Lỗi: {exc}")
+                return
+            await query.answer()
+            formatted = format_student_profile(profile)
+            if gpa_records:
+                latest = gpa_records[0]
+                gpa_tich_luy = latest.get("TC_SV_KetQuaHocTap_DiemTrungBinhTichLuyHe10", "-")
+                gpa_tin_chi = latest.get("TC_SV_KetQuaHocTap_DiemTrungBinhTichLuyHe4", "-")
+                tin_chi_tich_luy = latest.get("TC_SV_KetQuaHocTap_TongSoTinChiTichLuy", "-")
+                drl_tich_luy = latest.get("TC_SV_KetQuaHocTap_DiemRenLuyen", "-")
+                
+                summary_text = (
+                    f"\n\n📊 <b>TÓM TẮT HỌC TẬP TÍCH LŨY</b>\n"
+                    f"• <b>Tích lũy hệ 10:</b> <code>{gpa_tich_luy}</code>\n"
+                    f"• <b>Tích lũy hệ 4:</b> <code>{gpa_tin_chi}</code>\n"
+                    f"• <b>Tín chỉ tích lũy:</b> <code>{tin_chi_tich_luy}</code>\n"
+                    f"• <b>Điểm rèn luyện gần nhất:</b> <code>{drl_tich_luy}</code>"
+                )
+                formatted += summary_text
+            
+            keyboard = InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton("📊 Bảng điểm", callback_data=f"find:scores:{target_mssv}"),
+                        InlineKeyboardButton("📈 Điểm GPA", callback_data=f"find:gpa:{target_mssv}"),
+                    ],
+                    [
+                        InlineKeyboardButton("❌ Đóng", callback_data="close_menu")
+                    ]
+                ]
+            )
+            await send_or_edit_html(update, formatted, reply_markup=keyboard)
+            return
 
     if data.startswith("menu:"):
         if data == "menu:main":
@@ -1147,7 +1320,7 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         if data == "menu:check":
             try:
-                rows = await asyncio.to_thread(get_scores, user_id)
+                rows = await get_scores_helper(user_id)
             except KeyError:
                 await prompt_login_credentials(update, user_id)
                 return
@@ -1162,7 +1335,7 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         if data == "menu:gpa":
             try:
-                records = await asyncio.to_thread(get_gpa_records, user_id)
+                records = await get_gpa_records_helper(user_id)
             except KeyError:
                 await prompt_login_credentials(update, user_id)
                 return
@@ -1176,7 +1349,7 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         if data == "menu:drl":
             try:
-                records = await asyncio.to_thread(get_gpa_records, user_id)
+                records = await get_gpa_records_helper(user_id)
             except KeyError:
                 await prompt_login_credentials(update, user_id)
                 return
@@ -1390,7 +1563,7 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if data.startswith("gpa:"):
         try:
-            records = await asyncio.to_thread(get_gpa_records, user_id)
+            records = await get_gpa_records_helper(user_id)
         except KeyError:
             await prompt_login_credentials(update, user_id)
             return
@@ -1400,7 +1573,8 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
 
         if data == "gpa:menu":
-            await send_or_edit_text(update, "Chọn kiểu xem GPA:", reply_markup=gpa_menu_keyboard(records))
+            target_mssv = get_check_context(user_id).get("target_mssv")
+            await send_or_edit_text(update, "Chọn kiểu xem GPA:", reply_markup=gpa_menu_keyboard(records, target_mssv=target_mssv))
             return
 
         if data == "gpa:current":
@@ -1422,7 +1596,7 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
 
     try:
-        rows = await asyncio.to_thread(get_scores, user_id)
+        rows = await get_scores_helper(user_id)
     except KeyError:
         await prompt_login_credentials(update, user_id)
         return
@@ -1432,8 +1606,9 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     if data == "back:years":
+        target_mssv = get_check_context(user_id).get("target_mssv")
         set_check_context(user_id, {"stage": "years"})
-        await send_or_edit_text(update, "Chọn năm học:", reply_markup=year_keyboard(rows))
+        await send_or_edit_text(update, "Chọn năm học:", reply_markup=year_keyboard(rows, target_mssv=target_mssv))
         return
 
     if data == "back:subjects":
@@ -1679,6 +1854,7 @@ async def post_init(application) -> None:
             BotCommand("check", "Xem điểm"),
             BotCommand("gpa", "Xem GPA"),
             BotCommand("drl", "Xem điểm rèn luyện"),
+            BotCommand("find", "Tra cứu MSSV bất kỳ"),
             BotCommand("setting", "Cài đặt bot"),
             BotCommand("logout", "Đăng xuất tài khoản"),
         ]
@@ -1700,6 +1876,7 @@ def main() -> None:
     app.add_handler(CommandHandler("check", check_command))
     app.add_handler(CommandHandler("gpa", gpa_command))
     app.add_handler(CommandHandler("drl", drl_command))
+    app.add_handler(CommandHandler("find", find_command))
     app.add_handler(CommandHandler("setting", setting_command))
     app.add_handler(CallbackQueryHandler(callback_selection))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_selection))

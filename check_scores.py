@@ -603,6 +603,71 @@ def get_student_profile(telegram_user_id: str) -> dict | None:
     return None
 
 
+def get_scores_by_mssv(student_id: str) -> list[dict]:
+    tokens = load_tokens()
+    if not tokens:
+        raise KeyError("No users logged in")
+    user_id = list(tokens.keys())[0]
+    token_info = tokens[user_id]
+    encoded_student_id = quote(student_id)
+
+    url = (
+        f"{API_BASE_URL}/SP_TC_SV_KetQuaHocTap_TiepNhan/"
+        "EDU_Load_Para_MaSinhVien_ChiTiet"
+        f"?TC_SV_KetQuaHocTap_MaSinhVien={encoded_student_id}"
+    )
+
+    response = request_with_saved_token("GET", url, token_info)
+    save_tokens(tokens)
+
+    data = parse_json_response(response, "Lấy điểm")
+    return data.get("body", [])
+
+
+def get_gpa_records_by_mssv(student_id: str) -> list[dict]:
+    tokens = load_tokens()
+    if not tokens:
+        raise KeyError("No users logged in")
+    user_id = list(tokens.keys())[0]
+    token_info = tokens[user_id]
+    encoded_student_id = quote(student_id)
+
+    url = (
+        f"{API_BASE_URL}/SP_TC_SV_KetQuaHocTap_TiepNhan/"
+        "EDU_Load_Para_MaSinhVien_DiemTrungBinhHocKy"
+        f"?TC_SV_KetQuaHocTap_MaSinhVien={encoded_student_id}"
+    )
+
+    response = request_with_saved_token("GET", url, token_info)
+    save_tokens(tokens)
+
+    data = parse_json_response(response, "Lấy GPA")
+    return data.get("body", [])
+
+
+def get_student_profile_by_mssv(student_id: str) -> dict | None:
+    tokens = load_tokens()
+    if not tokens:
+        raise KeyError("No active tokens in pool")
+    user_id = list(tokens.keys())[0]
+    token_info = tokens[user_id]
+    
+    from login import cryptojs_aes_encrypt
+    payload = {
+        "TC_SV_MaSinhVien": cryptojs_aes_encrypt(student_id)
+    }
+    
+    url = f"{API_BASE_URL}/SP_MC_MaSinhVien/Load_Web_App_Para"
+    response = request_with_saved_token("POST", url, token_info, json=payload)
+    save_tokens(tokens)
+    
+    data = parse_json_response(response, "Lấy thông tin sinh viên")
+    body = data.get("body", [])
+    if body and isinstance(body, list):
+        return body[0]
+    return None
+
+
 def main() -> None:
     rows = get_scores()
     print(f"Tổng số dòng điểm: {len(rows)}")

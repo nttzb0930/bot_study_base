@@ -17,6 +17,7 @@ from bot import (
     logout_command,
     check_command,
     gpa_command,
+    find_command,
     setting_command,
     callback_selection,
     text_selection,
@@ -34,6 +35,7 @@ async def webhook_post_init(application) -> None:
             BotCommand("login", "Đăng nhập UNETI"),
             BotCommand("check", "Xem điểm"),
             BotCommand("gpa", "Xem GPA"),
+            BotCommand("find", "Tra cứu MSSV bất kỳ"),
             BotCommand("setting", "Cài đặt bot"),
             BotCommand("logout", "Đăng xuất tài khoản"),
         ]
@@ -48,6 +50,7 @@ telegram_app.add_handler(CommandHandler("login", login_command))
 telegram_app.add_handler(CommandHandler("logout", logout_command))
 telegram_app.add_handler(CommandHandler("check", check_command))
 telegram_app.add_handler(CommandHandler("gpa", gpa_command))
+telegram_app.add_handler(CommandHandler("find", find_command))
 telegram_app.add_handler(CommandHandler("setting", setting_command))
 telegram_app.add_handler(CallbackQueryHandler(callback_selection))
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_selection))
