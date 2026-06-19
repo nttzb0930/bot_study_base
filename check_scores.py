@@ -1,36 +1,40 @@
 import json
+import logging
 import os
 import sys
+import time
 from pathlib import Path
 from urllib.parse import quote
 
-import time
-import logging
 import redis
-
 import requests
 from dotenv import load_dotenv
 from requests import Response
 
+# Local imports
+from db import TOKEN_FILE, load_tokens, save_tokens
+from login import cryptojs_aes_encrypt
 
+# Load configuration and initialize environment
 load_dotenv()
 
-API_BASE_URL = os.getenv("API_BASE_URL", "https://apiv3.uneti.edu.vn/api")
-from db import TOKEN_FILE, load_tokens, save_tokens
-
+# System stdout configuration
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-
+# Logging setup
 logger = logging.getLogger(__name__)
 
-# Redis Connection Setup with Graceful Fallback
+# Global Configurations and Constants
+API_BASE_URL = os.getenv("API_BASE_URL", "https://apiv3.uneti.edu.vn/api")
+ADMIN_TELEGRAM_ID = os.getenv("ADMIN_TELEGRAM_ID")
+CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "300"))
+
+# Initialize Redis connection with fallback
+redis_client = None
 REDIS_URL = os.getenv("REDIS_URL")
 if REDIS_URL:
     REDIS_URL = REDIS_URL.strip('\'"')
-redis_client = None
-
-if REDIS_URL:
     try:
         redis_client = redis.from_url(
             REDIS_URL,
@@ -44,18 +48,22 @@ if REDIS_URL:
         logger.warning("Redis configured but connection failed: %s. Falling back to In-Memory cache.", exc)
         redis_client = None
 
-# Caching configuration and memory storage
-CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "300"))
+# In-Memory Fallback Cache Storage
 _API_CACHE = {
     "scores": {},       # student_id -> {"data": ..., "timestamp": ...}
     "gpa": {},          # student_id -> {"data": ..., "timestamp": ...}
     "profile": {},      # student_id -> {"data": ..., "timestamp": ...}
 }
 
+
+class ApiResponseError(RuntimeError):
+    pass
+
+
+# Cache Helper Functions
 def get_cached_data(cache_type: str, student_id: str):
     key = f"uneti:cache:{cache_type}:{student_id}"
 
-    # Try Redis first
     if redis_client:
         try:
             cached_val = redis_client.get(key)
@@ -64,7 +72,6 @@ def get_cached_data(cache_type: str, student_id: str):
         except Exception as exc:
             logger.warning("Failed to get cache from Redis: %s. Trying In-Memory fallback.", exc)
 
-    # In-memory fallback
     entry = _API_CACHE.get(cache_type, {}).get(student_id)
     if entry:
         if time.time() - entry["timestamp"] < CACHE_TTL_SECONDS:
@@ -73,10 +80,10 @@ def get_cached_data(cache_type: str, student_id: str):
             _API_CACHE[cache_type].pop(student_id, None)
     return None
 
+
 def set_cached_data(cache_type: str, student_id: str, data) -> None:
     key = f"uneti:cache:{cache_type}:{student_id}"
 
-    # Try Redis first
     if redis_client:
         try:
             redis_client.setex(key, CACHE_TTL_SECONDS, json.dumps(data))
@@ -84,7 +91,6 @@ def set_cached_data(cache_type: str, student_id: str, data) -> None:
         except Exception as exc:
             logger.warning("Failed to set cache in Redis: %s. Storing In-Memory.", exc)
 
-    # In-memory fallback
     if cache_type not in _API_CACHE:
         _API_CACHE[cache_type] = {}
     _API_CACHE[cache_type][student_id] = {
@@ -93,10 +99,59 @@ def set_cached_data(cache_type: str, student_id: str, data) -> None:
     }
 
 
+# Admin / Token Pool Helper Functions
+def get_admin_token() -> tuple[str, dict]:
+    """
+    Returns the (admin_telegram_id, token_info) for the admin account.
+    Raises KeyError if the admin token is not found or ADMIN_TELEGRAM_ID is not configured.
+    """
+    if not ADMIN_TELEGRAM_ID:
+        raise KeyError("ADMIN_TELEGRAM_ID is not configured in environment variables.")
+    
+    tokens = load_tokens()
+    admin_str = str(ADMIN_TELEGRAM_ID).strip('\'"')
+    admin_info = tokens.get(admin_str)
+    if not admin_info:
+        raise KeyError(f"Tài khoản Admin (Telegram ID: {admin_str}) chưa đăng nhập vào bot.")
+    
+    return admin_str, admin_info
 
 
-class ApiResponseError(RuntimeError):
-    pass
+def notify_admin_relogin() -> None:
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if ADMIN_TELEGRAM_ID and bot_token:
+        try:
+            admin_str = str(ADMIN_TELEGRAM_ID).strip('\'"')
+            token_str = bot_token.strip('\'"')
+            url = f"https://api.telegram.org/bot{token_str}/sendMessage"
+            payload = {
+                "chat_id": admin_str,
+                "text": "⚠️ <b>Thông báo hệ thống:</b>\nTài khoản Admin dùng để tra cứu điểm chéo đã hết hạn hoặc bị lỗi đăng nhập. Vui lòng chat /login để đăng nhập lại nhằm duy trì tính năng tra cứu ổn định.",
+                "parse_mode": "HTML"
+            }
+            requests.post(url, json=payload, timeout=5)
+        except Exception as e:
+            logger.exception("Failed to send relogin notification to admin: %s", e)
+
+
+def handle_token_failure(user_id: str, exc: Exception) -> None:
+    is_auth_error = False
+    if hasattr(exc, "response") and exc.response is not None:
+        if exc.response.status_code in (401, 403):
+            is_auth_error = True
+    if isinstance(exc, (KeyError, ApiResponseError)) or "unauthorized" in str(exc).lower() or "login" in str(exc).lower():
+        is_auth_error = True
+        
+    if is_auth_error:
+        tokens = load_tokens()
+        tokens.pop(user_id, None)
+        save_tokens(tokens)
+        
+        if ADMIN_TELEGRAM_ID:
+            admin_str = str(ADMIN_TELEGRAM_ID).strip('\'"')
+            if user_id == admin_str:
+                logger.warning("Admin token failed with authentication error. Removing from pool and notifying admin.")
+                notify_admin_relogin()
 
 
 def parse_json_response(response: Response, action: str) -> dict:
@@ -704,26 +759,30 @@ def get_scores_by_mssv(student_id: str) -> list[dict]:
     if cached is not None:
         return cached
 
-    tokens = load_tokens()
-    if not tokens:
-        raise KeyError("No users logged in")
-    user_id = list(tokens.keys())[0]
-    token_info = tokens[user_id]
+    user_id, token_info = get_admin_token()
     encoded_student_id = quote(student_id)
-
     url = (
         f"{API_BASE_URL}/SP_TC_SV_KetQuaHocTap_TiepNhan/"
         "EDU_Load_Para_MaSinhVien_ChiTiet"
         f"?TC_SV_KetQuaHocTap_MaSinhVien={encoded_student_id}"
     )
 
-    response = request_with_saved_token("GET", url, token_info)
-    save_tokens(tokens)
+    try:
+        response = request_with_saved_token("GET", url, token_info)
+        
+        # Save token info in case it got refreshed
+        tokens = load_tokens()
+        tokens[user_id] = token_info
+        save_tokens(tokens)
 
-    data = parse_json_response(response, "Lấy điểm")
-    result = data.get("body", [])
-    set_cached_data("scores", student_id, result)
-    return result
+        data = parse_json_response(response, "Lấy điểm")
+        result = data.get("body", [])
+        set_cached_data("scores", student_id, result)
+        return result
+    except Exception as exc:
+        logger.error("Admin lookup failed for get_scores_by_mssv: %s", exc)
+        handle_token_failure(user_id, exc)
+        raise
 
 
 def get_gpa_records_by_mssv(student_id: str) -> list[dict]:
@@ -731,26 +790,30 @@ def get_gpa_records_by_mssv(student_id: str) -> list[dict]:
     if cached is not None:
         return cached
 
-    tokens = load_tokens()
-    if not tokens:
-        raise KeyError("No users logged in")
-    user_id = list(tokens.keys())[0]
-    token_info = tokens[user_id]
+    user_id, token_info = get_admin_token()
     encoded_student_id = quote(student_id)
-
     url = (
         f"{API_BASE_URL}/SP_TC_SV_KetQuaHocTap_TiepNhan/"
         "EDU_Load_Para_MaSinhVien_DiemTrungBinhHocKy"
         f"?TC_SV_KetQuaHocTap_MaSinhVien={encoded_student_id}"
     )
 
-    response = request_with_saved_token("GET", url, token_info)
-    save_tokens(tokens)
+    try:
+        response = request_with_saved_token("GET", url, token_info)
 
-    data = parse_json_response(response, "Lấy GPA")
-    result = data.get("body", [])
-    set_cached_data("gpa", student_id, result)
-    return result
+        # Save token info in case it got refreshed
+        tokens = load_tokens()
+        tokens[user_id] = token_info
+        save_tokens(tokens)
+
+        data = parse_json_response(response, "Lấy GPA")
+        result = data.get("body", [])
+        set_cached_data("gpa", student_id, result)
+        return result
+    except Exception as exc:
+        logger.error("Admin lookup failed for get_gpa_records_by_mssv: %s", exc)
+        handle_token_failure(user_id, exc)
+        raise
 
 
 def get_student_profile_by_mssv(student_id: str) -> dict | None:
@@ -758,28 +821,31 @@ def get_student_profile_by_mssv(student_id: str) -> dict | None:
     if cached is not None:
         return cached
 
-    tokens = load_tokens()
-    if not tokens:
-        raise KeyError("No active tokens in pool")
-    user_id = list(tokens.keys())[0]
-    token_info = tokens[user_id]
-    
-    from login import cryptojs_aes_encrypt
+    user_id, token_info = get_admin_token()
     payload = {
         "TC_SV_MaSinhVien": cryptojs_aes_encrypt(student_id)
     }
-    
     url = f"{API_BASE_URL}/SP_MC_MaSinhVien/Load_Web_App_Para"
-    response = request_with_saved_token("POST", url, token_info, json=payload)
-    save_tokens(tokens)
-    
-    data = parse_json_response(response, "Lấy thông tin sinh viên")
-    body = data.get("body", [])
-    result = None
-    if body and isinstance(body, list):
-        result = body[0]
-    set_cached_data("profile", student_id, result)
-    return result
+
+    try:
+        response = request_with_saved_token("POST", url, token_info, json=payload)
+
+        # Save token info in case it got refreshed
+        tokens = load_tokens()
+        tokens[user_id] = token_info
+        save_tokens(tokens)
+        
+        data = parse_json_response(response, "Lấy thông tin sinh viên")
+        body = data.get("body", [])
+        result = None
+        if body and isinstance(body, list):
+            result = body[0]
+        set_cached_data("profile", student_id, result)
+        return result
+    except Exception as exc:
+        logger.error("Admin lookup failed for get_student_profile_by_mssv: %s", exc)
+        handle_token_failure(user_id, exc)
+        raise
 
 
 def main() -> None:
