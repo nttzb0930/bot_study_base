@@ -1095,11 +1095,10 @@ async def find_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     target_mssv = context.args[0].strip()
     if not (target_mssv.isdigit() and len(target_mssv) == 11 and (20 <= int(target_mssv[:2]) <= 26)):
-        await send_long_message(
+        await send_long_html_message(
             update,
             "⚠️ <b>Mã sinh viên không hợp lệ!</b>\n"
-            "Mã sinh viên trường UNETI phải gồm đúng 11 chữ số và bắt đầu bằng mã khóa học hợp lệ (từ 20 đến 26).",
-            parse_mode="HTML"
+            "Mã sinh viên trường UNETI phải gồm đúng 11 chữ số và bắt đầu bằng mã khóa học hợp lệ (từ 20 đến 26)."
         )
         return
 
