@@ -136,12 +136,30 @@ def notify_admin_relogin() -> None:
 
 def handle_token_failure(user_id: str, exc: Exception) -> bool:
     is_auth_error = False
+    
+    # 401 Unauthorized or 403 Forbidden are true token/auth errors.
+    # 400 Bad Request is only an auth error if it occurs during token refresh,
+    # otherwise on data endpoints it just means bad input parameters (e.g. wrong student ID).
     if hasattr(exc, "response") and exc.response is not None:
-        if exc.response.status_code in (400, 401, 403):
+        if exc.response.status_code in (401, 403):
             is_auth_error = True
-    exc_str = str(exc).lower()
-    if isinstance(exc, (KeyError, ApiResponseError)) or any(w in exc_str for w in ["unauthorized", "login", "refresh", "token", "expired"]):
+        elif exc.response.status_code == 400:
+            url = getattr(exc.response, "url", "") or ""
+            if "RefreshToken" in url or "Login" in url:
+                is_auth_error = True
+
+    # KeyErrors representing a missing token in the local DB are auth errors.
+    if isinstance(exc, KeyError) and "logged in" in str(exc).lower():
         is_auth_error = True
+
+    # Check for explicit token expired / invalid error messages in the exception text
+    # but ONLY if it is not an HTML page error or network error
+    if not is_auth_error:
+        exc_str = str(exc).lower()
+        is_server_error = "iisnode" in exc_str or "500" in exc_str or "502" in exc_str or "503" in exc_str or "504" in exc_str or "connection" in exc_str or "timeout" in exc_str
+        if not is_server_error:
+            if any(w in exc_str for w in ["unauthorized", "invalid token", "token is expired", "chưa đăng nhập", "không hợp lệ"]):
+                is_auth_error = True
         
     if is_auth_error:
         logger.warning("Token failure detected for user %s. Performing clean logout.", user_id)
