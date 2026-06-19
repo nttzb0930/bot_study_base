@@ -123,6 +123,7 @@ def load_user_settings() -> dict:
                         "auto_delete_enabled": doc.get("auto_delete_enabled"),
                         "auto_delete_seconds": doc.get("auto_delete_seconds"),
                         "score_notifications_enabled": doc.get("score_notifications_enabled"),
+                        "privacy_allow_find": doc.get("privacy_allow_find"),
                     }
             return result
         except Exception as e:
@@ -149,6 +150,7 @@ def save_user_settings(settings: dict) -> None:
                         "auto_delete_enabled": info.get("auto_delete_enabled"),
                         "auto_delete_seconds": info.get("auto_delete_seconds"),
                         "score_notifications_enabled": info.get("score_notifications_enabled"),
+                        "privacy_allow_find": info.get("privacy_allow_find"),
                     }},
                     upsert=True
                 )

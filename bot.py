@@ -154,7 +154,35 @@ def get_user_settings(user_id: str) -> dict:
             "score_notifications_enabled",
             True,
         ),
+        "privacy_allow_find": user_settings.get(
+            "privacy_allow_find",
+            True,
+        ),
     }
+
+
+def is_search_blocked(target_mssv: str, requester_id: str) -> bool:
+    admin_id = os.getenv("ADMIN_TELEGRAM_ID")
+    if admin_id:
+        admin_str = str(admin_id).strip('\'"')
+        if str(requester_id) == admin_str:
+            return False
+
+    tokens = load_tokens()
+    target_user_id = None
+    for uid, info in tokens.items():
+        if info.get("username") == target_mssv:
+            target_user_id = uid
+            break
+
+    if not target_user_id:
+        return False
+
+    settings = get_user_settings(target_user_id)
+    if not settings.get("privacy_allow_find", True):
+        return True
+
+    return False
 
 
 def update_user_settings(user_id: str, **values) -> dict:
@@ -712,12 +740,14 @@ def settings_text(user_id: str) -> str:
     status = "Bật" if settings["auto_delete_enabled"] else "Tắt"
     seconds = int(settings["auto_delete_seconds"])
     notif_status = "Bật" if settings["score_notifications_enabled"] else "Tắt"
+    privacy_status = "Cho phép" if settings["privacy_allow_find"] else "Chặn"
     return "\n".join(
         [
             "Cài đặt bot",
             f"Auto xóa message: {status}",
             f"Thời gian xóa: {format_seconds(seconds)}",
             f"Thông báo điểm mới: {notif_status}",
+            f"Cho phép người khác tra cứu: {privacy_status}",
             "",
             "Chọn nút bên dưới để đổi cài đặt.",
         ]
@@ -728,6 +758,7 @@ def settings_keyboard(user_id: str) -> InlineKeyboardMarkup:
     settings = get_user_settings(user_id)
     toggle_label = "🔴 Tắt tự động xóa" if settings["auto_delete_enabled"] else "🟢 Bật tự động xóa"
     notif_label = "🔕 Tắt thông báo điểm" if settings["score_notifications_enabled"] else "🔔 Bật thông báo điểm"
+    privacy_label = "🔒 Chặn tra cứu chéo" if settings["privacy_allow_find"] else "🔓 Cho phép tra cứu chéo"
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton(toggle_label, callback_data="setting:toggle")],
@@ -742,6 +773,7 @@ def settings_keyboard(user_id: str) -> InlineKeyboardMarkup:
             ],
             [InlineKeyboardButton("✏️ Tự chọn giây", callback_data="setting:custom")],
             [InlineKeyboardButton(notif_label, callback_data="setting:notif_toggle")],
+            [InlineKeyboardButton(privacy_label, callback_data="setting:privacy_toggle")],
             [InlineKeyboardButton("⬅️ Quay lại", callback_data="menu:main")],
         ]
     )
@@ -1066,6 +1098,10 @@ async def find_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await send_long_message(update, "Mã sinh viên phải là định dạng số.")
         return
 
+    if is_search_blocked(target_mssv, user_id):
+        await send_long_message(update, "❌ Sinh viên này đã từ chối chia sẻ thông tin tra cứu công khai.")
+        return
+
     await send_long_html_message(update, f"🔍 Đang tra cứu thông tin cho MSSV: <code>{target_mssv}</code>...")
 
     try:
@@ -1230,6 +1266,11 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parts = data.split(":")
         action = parts[1]
         target_mssv = parts[2]
+        
+        if is_search_blocked(target_mssv, user_id):
+            await query.answer(text="Quyền riêng tư đã bị chặn!", show_alert=True)
+            await send_or_edit_text(update, "❌ Sinh viên này đã từ chối chia sẻ thông tin tra cứu công khai.")
+            return
         
         if action == "scores":
             set_check_context(user_id, {"stage": "years", "target_mssv": target_mssv})
@@ -1444,6 +1485,18 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             status_str = "Bật" if new_enabled else "Tắt"
             await query.answer(text=f"Đã {status_str.lower()} nhận thông báo điểm mới!")
+            await send_or_edit_text(update, settings_text(user_id), reply_markup=settings_keyboard(user_id))
+            return
+
+        if data == "setting:privacy_toggle":
+            current = get_user_settings(user_id)
+            new_enabled = not current["privacy_allow_find"]
+            update_user_settings(
+                user_id,
+                privacy_allow_find=new_enabled,
+            )
+            status_str = "Cho phép" if new_enabled else "Chặn"
+            await query.answer(text=f"Đã đổi trạng thái tra cứu sang {status_str.lower()}!")
             await send_or_edit_text(update, settings_text(user_id), reply_markup=settings_keyboard(user_id))
             return
 

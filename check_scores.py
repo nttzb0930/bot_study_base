@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from requests import Response
 
 # Local imports
-from db import TOKEN_FILE, load_tokens, save_tokens
+from db import TOKEN_FILE, load_tokens, save_tokens, delete_user_login
 from login import cryptojs_aes_encrypt
 
 # Load configuration and initialize environment
@@ -137,15 +137,25 @@ def notify_admin_relogin() -> None:
 def handle_token_failure(user_id: str, exc: Exception) -> None:
     is_auth_error = False
     if hasattr(exc, "response") and exc.response is not None:
-        if exc.response.status_code in (401, 403):
+        if exc.response.status_code in (400, 401, 403):
             is_auth_error = True
-    if isinstance(exc, (KeyError, ApiResponseError)) or "unauthorized" in str(exc).lower() or "login" in str(exc).lower():
+    exc_str = str(exc).lower()
+    if isinstance(exc, (KeyError, ApiResponseError)) or any(w in exc_str for w in ["unauthorized", "login", "refresh", "token", "expired"]):
         is_auth_error = True
         
     if is_auth_error:
-        tokens = load_tokens()
-        tokens.pop(user_id, None)
-        save_tokens(tokens)
+        logger.warning("Token failure detected for user %s. Performing clean logout.", user_id)
+        try:
+            delete_user_login(user_id)
+        except Exception as delete_exc:
+            logger.exception("Failed to clean delete user login: %s", delete_exc)
+            # Fallback to manual dictionary deletion just in case
+            try:
+                tokens = load_tokens()
+                tokens.pop(user_id, None)
+                save_tokens(tokens)
+            except Exception:
+                pass
         
         if ADMIN_TELEGRAM_ID:
             admin_str = str(ADMIN_TELEGRAM_ID).strip('\'"')
@@ -219,7 +229,9 @@ def request_with_saved_token(method: str, url: str, token_info: dict, **kwargs):
 
 def get_scores(telegram_user_id: str = "default") -> list[dict]:
     tokens = load_tokens()
-    token_info = tokens[str(telegram_user_id)]
+    token_info = tokens.get(str(telegram_user_id))
+    if not token_info:
+        raise KeyError("User not logged in")
     student_id = token_info["username"]
     
     cached = get_cached_data("scores", student_id)
@@ -234,18 +246,24 @@ def get_scores(telegram_user_id: str = "default") -> list[dict]:
         f"?TC_SV_KetQuaHocTap_MaSinhVien={encoded_student_id}"
     )
 
-    response = request_with_saved_token("GET", url, token_info)
-    save_tokens(tokens)
+    try:
+        response = request_with_saved_token("GET", url, token_info)
+        save_tokens(tokens)
 
-    data = parse_json_response(response, "Lấy điểm")
-    result = data.get("body", [])
-    set_cached_data("scores", student_id, result)
-    return result
+        data = parse_json_response(response, "Lấy điểm")
+        result = data.get("body", [])
+        set_cached_data("scores", student_id, result)
+        return result
+    except Exception as exc:
+        handle_token_failure(str(telegram_user_id), exc)
+        raise KeyError("Phiên đăng nhập đã hết hạn hoặc bị lỗi xác thực. Vui lòng đăng nhập lại.") from exc
 
 
 def get_gpa_records(telegram_user_id: str = "default") -> list[dict]:
     tokens = load_tokens()
-    token_info = tokens[str(telegram_user_id)]
+    token_info = tokens.get(str(telegram_user_id))
+    if not token_info:
+        raise KeyError("User not logged in")
     student_id = token_info["username"]
     
     cached = get_cached_data("gpa", student_id)
@@ -260,13 +278,17 @@ def get_gpa_records(telegram_user_id: str = "default") -> list[dict]:
         f"?TC_SV_KetQuaHocTap_MaSinhVien={encoded_student_id}"
     )
 
-    response = request_with_saved_token("GET", url, token_info)
-    save_tokens(tokens)
+    try:
+        response = request_with_saved_token("GET", url, token_info)
+        save_tokens(tokens)
 
-    data = parse_json_response(response, "Lấy GPA")
-    result = data.get("body", [])
-    set_cached_data("gpa", student_id, result)
-    return result
+        data = parse_json_response(response, "Lấy GPA")
+        result = data.get("body", [])
+        set_cached_data("gpa", student_id, result)
+        return result
+    except Exception as exc:
+        handle_token_failure(str(telegram_user_id), exc)
+        raise KeyError("Phiên đăng nhập đã hết hạn hoặc bị lỗi xác thực. Vui lòng đăng nhập lại.") from exc
 
 
 def format_gpa_summary(records: list[dict], title: str = "GPA / Điểm trung bình") -> str:
@@ -688,7 +710,9 @@ def format_score_row_detail_table(row: dict) -> str:
 
 def get_schedules(telegram_user_id: str = "default") -> list[dict]:
     tokens = load_tokens()
-    token_info = tokens[str(telegram_user_id)]
+    token_info = tokens.get(str(telegram_user_id))
+    if not token_info:
+        raise KeyError("User not logged in")
     student_id = token_info["username"]
     encoded_student_id = quote(student_id)
 
@@ -698,16 +722,22 @@ def get_schedules(telegram_user_id: str = "default") -> list[dict]:
         f"?TC_SV_KetQuaHocTap_MaSinhVien={encoded_student_id}"
     )
 
-    response = request_with_saved_token("GET", url, token_info)
-    save_tokens(tokens)
+    try:
+        response = request_with_saved_token("GET", url, token_info)
+        save_tokens(tokens)
 
-    data = parse_json_response(response, "Lấy lịch học")
-    return data.get("body", [])
+        data = parse_json_response(response, "Lấy lịch học")
+        return data.get("body", [])
+    except Exception as exc:
+        handle_token_failure(str(telegram_user_id), exc)
+        raise KeyError("Phiên đăng nhập đã hết hạn hoặc bị lỗi xác thực. Vui lòng đăng nhập lại.") from exc
 
 
 def get_exam_schedules(telegram_user_id: str = "default") -> list[dict]:
     tokens = load_tokens()
-    token_info = tokens[str(telegram_user_id)]
+    token_info = tokens.get(str(telegram_user_id))
+    if not token_info:
+        raise KeyError("User not logged in")
     student_id = token_info["username"]
     encoded_student_id = quote(student_id)
 
@@ -717,11 +747,15 @@ def get_exam_schedules(telegram_user_id: str = "default") -> list[dict]:
         f"?TC_SV_KetQuaHocTap_MaSinhVien={encoded_student_id}"
     )
 
-    response = request_with_saved_token("GET", url, token_info)
-    save_tokens(tokens)
+    try:
+        response = request_with_saved_token("GET", url, token_info)
+        save_tokens(tokens)
 
-    data = parse_json_response(response, "Lấy lịch thi")
-    return data.get("body", [])
+        data = parse_json_response(response, "Lấy lịch thi")
+        return data.get("body", [])
+    except Exception as exc:
+        handle_token_failure(str(telegram_user_id), exc)
+        raise KeyError("Phiên đăng nhập đã hết hạn hoặc bị lỗi xác thực. Vui lòng đăng nhập lại.") from exc
 
 
 def get_student_profile(telegram_user_id: str) -> dict | None:
@@ -742,16 +776,20 @@ def get_student_profile(telegram_user_id: str) -> dict | None:
     }
     
     url = f"{API_BASE_URL}/SP_MC_MaSinhVien/Load_Web_App_Para"
-    response = request_with_saved_token("POST", url, token_info, json=payload)
-    save_tokens(tokens)
-    
-    data = parse_json_response(response, "Lấy thông tin sinh viên")
-    body = data.get("body", [])
-    result = None
-    if body and isinstance(body, list):
-        result = body[0]
-    set_cached_data("profile", student_id, result)
-    return result
+    try:
+        response = request_with_saved_token("POST", url, token_info, json=payload)
+        save_tokens(tokens)
+        
+        data = parse_json_response(response, "Lấy thông tin sinh viên")
+        body = data.get("body", [])
+        result = None
+        if body and isinstance(body, list):
+            result = body[0]
+        set_cached_data("profile", student_id, result)
+        return result
+    except Exception as exc:
+        handle_token_failure(str(telegram_user_id), exc)
+        raise KeyError("Phiên đăng nhập đã hết hạn hoặc bị lỗi xác thực. Vui lòng đăng nhập lại.") from exc
 
 
 def get_scores_by_mssv(student_id: str) -> list[dict]:
