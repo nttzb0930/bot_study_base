@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -33,7 +34,15 @@ from check_scores import (
     get_student_profile_by_mssv,
 )
 from login import get_existing_login_status, login as uneti_login, save_login
-from db import load_user_settings, save_user_settings, delete_user_login, load_tokens, save_tokens
+from db import (
+    delete_user_login,
+    load_custom_schedules,
+    load_tokens,
+    load_user_settings,
+    save_custom_schedules,
+    save_tokens,
+    save_user_settings,
+)
 
 
 logging.basicConfig(
@@ -47,6 +56,7 @@ load_dotenv()
 USER_CHECK_CONTEXT: dict[str, dict] = {}
 USER_LOGIN_CONTEXT: dict[str, dict] = {}
 USER_SETTING_CONTEXT: dict[str, dict] = {}
+USER_CUSTOM_SCHEDULE_CONTEXT: dict[str, dict] = {}
 CHECK_CONTEXT_TTL_SECONDS = int(os.getenv("CHECK_CONTEXT_TTL_SECONDS", "3600"))
 AUTO_DELETE_MESSAGES_SECONDS = int(os.getenv("AUTO_DELETE_MESSAGES_SECONDS", "300"))
 
@@ -109,10 +119,29 @@ def clear_setting_context(user_id: str) -> None:
     USER_SETTING_CONTEXT.pop(user_id, None)
 
 
+def set_custom_schedule_context(user_id: str, data: dict) -> None:
+    USER_CUSTOM_SCHEDULE_CONTEXT[user_id] = {**data, "updated_at": time.time()}
+
+
+def get_custom_schedule_context(user_id: str) -> dict:
+    data = USER_CUSTOM_SCHEDULE_CONTEXT.get(user_id)
+    if not data:
+        return {}
+    if time.time() - data.get("updated_at", 0) > CHECK_CONTEXT_TTL_SECONDS:
+        USER_CUSTOM_SCHEDULE_CONTEXT.pop(user_id, None)
+        return {}
+    return data
+
+
+def clear_custom_schedule_context(user_id: str) -> None:
+    USER_CUSTOM_SCHEDULE_CONTEXT.pop(user_id, None)
+
+
 def clear_all_contexts(user_id: str) -> None:
     clear_login_context(user_id)
     clear_check_context(user_id)
     clear_setting_context(user_id)
+    clear_custom_schedule_context(user_id)
 
 
 async def get_scores_helper(user_id: str) -> list[dict]:
@@ -431,10 +460,144 @@ def schedule_menu_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton("🌅 Lịch học ngày mai", callback_data="schedule:tomorrow")],
             [InlineKeyboardButton("📅 Lịch học tuần này", callback_data="schedule:week")],
             [InlineKeyboardButton("🗓️ Lịch học tuần sau", callback_data="schedule:next_week")],
+            [InlineKeyboardButton("✍️ Lịch học tự thêm", callback_data="schedule:custom")],
             [InlineKeyboardButton("📝 Lịch thi sắp tới", callback_data="schedule:exams")],
             [InlineKeyboardButton("⬅️ Quay lại", callback_data="menu:main")],
         ]
     )
+
+
+def custom_schedule_keyboard(user_id: str) -> InlineKeyboardMarkup:
+    schedules = load_custom_schedules(user_id)
+    buttons = [
+        [InlineKeyboardButton("➕ Thêm lịch", callback_data="schedule:custom:add")]
+    ]
+    for schedule in schedules:
+        schedule_id = str(schedule.get("id", ""))
+        name = str(schedule.get("name", "Không rõ"))[:24]
+        weekday = schedule.get("weekday", "-")
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    f"🗑 {name} (Thứ {weekday})",
+                    callback_data=f"schedule:custom:delete:{schedule_id}",
+                )
+            ]
+        )
+    buttons.append(
+        [InlineKeyboardButton("⬅️ Quay lại", callback_data="menu:schedule")]
+    )
+    return InlineKeyboardMarkup(buttons)
+
+
+def custom_schedule_text(user_id: str) -> str:
+    schedules = load_custom_schedules(user_id)
+    if not schedules:
+        return "✍️ <b>LỊCH HỌC TỰ THÊM</b>\n\nBạn chưa thêm lịch học nào."
+
+    lines = ["✍️ <b>LỊCH HỌC TỰ THÊM</b>"]
+    for index, schedule in enumerate(schedules, 1):
+        lines.append(
+            "\n"
+            f"<b>{index}. {html.escape(str(schedule.get('name', 'Không rõ')))}</b>\n"
+            f"- Thứ {schedule.get('weekday', '-')} · "
+            f"Tiết {schedule.get('start_period', '-')}-{schedule.get('end_period', '-')}\n"
+            f"- Phòng: {html.escape(str(schedule.get('room', '-')))}\n"
+            f"- Áp dụng: {schedule.get('start_date', '-')} → {schedule.get('end_date', '-')}"
+        )
+    lines.append("\nChọn một lịch bên dưới để xóa.")
+    return "\n".join(lines)
+
+
+def expand_custom_schedules(
+    user_id: str,
+    range_start: str,
+    range_end: str,
+) -> list[dict]:
+    try:
+        start = datetime.date.fromisoformat(range_start)
+        end = datetime.date.fromisoformat(range_end)
+    except ValueError:
+        return []
+
+    rows = []
+    for schedule in load_custom_schedules(user_id):
+        try:
+            active_start = datetime.date.fromisoformat(schedule["start_date"])
+            active_end = datetime.date.fromisoformat(schedule["end_date"])
+            weekday = int(schedule["weekday"])
+        except (KeyError, TypeError, ValueError):
+            continue
+
+        current = max(start, active_start)
+        last = min(end, active_end)
+        while current <= last:
+            api_weekday = current.weekday() + 2
+            if api_weekday == weekday:
+                rows.append(
+                    {
+                        "NgayBatDau": current.isoformat(),
+                        "Thu": weekday,
+                        "TenMonHoc": f"{html.escape(str(schedule.get('name', 'Không rõ')))} ✍️",
+                        "TuTiet": schedule.get("start_period"),
+                        "DenTiet": schedule.get("end_period"),
+                        "TenPhong": html.escape(str(schedule.get("room", "-"))),
+                        "CaHoc": "Tự thêm",
+                        "_is_custom": True,
+                    }
+                )
+            current += datetime.timedelta(days=1)
+    return rows
+
+
+def merge_custom_schedules(
+    api_rows: list[dict],
+    user_id: str,
+    range_start: str,
+    range_end: str,
+) -> list[dict]:
+    return [*api_rows, *expand_custom_schedules(user_id, range_start, range_end)]
+
+
+def parse_custom_schedule(text: str) -> dict:
+    parts = [part.strip() for part in text.split("|")]
+    if len(parts) != 7:
+        raise ValueError("Cần nhập đủ 7 trường, phân cách bằng dấu |.")
+
+    name, weekday_text, start_period_text, end_period_text, room, start_text, end_text = parts
+    if not name or not room:
+        raise ValueError("Tên môn và phòng không được để trống.")
+
+    try:
+        weekday = int(weekday_text)
+        start_period = int(start_period_text)
+        end_period = int(end_period_text)
+    except ValueError as exc:
+        raise ValueError("Thứ và tiết học phải là số nguyên.") from exc
+
+    if weekday not in range(2, 9):
+        raise ValueError("Thứ phải nằm trong khoảng 2-8 (8 là Chủ nhật).")
+    if start_period < 1 or end_period < start_period:
+        raise ValueError("Khoảng tiết học không hợp lệ.")
+
+    try:
+        start_date = datetime.datetime.strptime(start_text, "%d/%m/%Y").date()
+        end_date = datetime.datetime.strptime(end_text, "%d/%m/%Y").date()
+    except ValueError as exc:
+        raise ValueError("Ngày phải đúng định dạng dd/mm/yyyy.") from exc
+    if end_date < start_date:
+        raise ValueError("Ngày kết thúc phải từ ngày bắt đầu trở đi.")
+
+    return {
+        "id": uuid.uuid4().hex,
+        "name": name,
+        "weekday": weekday,
+        "start_period": start_period,
+        "end_period": end_period,
+        "room": room,
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+    }
 
 
 def format_schedules_day(rows: list[dict], date_label: str) -> str:
@@ -1545,13 +1708,65 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             schedule_auto_delete(message, user_id)
             return
-    else:
+    elif not data.startswith("schedule:"):
         await query.answer()
 
     if data.startswith("schedule:"):
         vn_tz = datetime.timezone(datetime.timedelta(hours=7))
         now_vn = datetime.datetime.now(vn_tz)
         today_str = now_vn.strftime("%Y-%m-%d")
+
+        if data == "schedule:custom":
+            clear_custom_schedule_context(user_id)
+            await query.answer()
+            await send_or_edit_html(
+                update,
+                custom_schedule_text(user_id),
+                reply_markup=custom_schedule_keyboard(user_id),
+            )
+            return
+
+        if data == "schedule:custom:add":
+            await query.answer()
+            markup = ForceReply(
+                selective=True,
+                input_field_placeholder="Tên | thứ | tiết đầu | tiết cuối | phòng | từ ngày | đến ngày",
+            )
+            message = await query.message.reply_text(
+                "Nhập lịch theo đúng mẫu:\n"
+                "<Tên môn> | <thứ 2-8> | <tiết đầu> | <tiết cuối> | "
+                "<phòng> | <dd/mm/yyyy> | <dd/mm/yyyy>\n\n"
+                "Ví dụ:\n"
+                "Thực hành mạng | 4 | 7 | 9 | A203 | 01/07/2026 | 30/09/2026\n\n"
+                "Quy ước: Thứ 8 là Chủ nhật.",
+                reply_markup=markup,
+            )
+            set_custom_schedule_context(
+                user_id,
+                {"stage": "add", "prompt_message_id": message.message_id},
+            )
+            schedule_auto_delete(message, user_id)
+            return
+
+        if data.startswith("schedule:custom:delete:"):
+            schedule_id = data.rsplit(":", 1)[-1]
+            schedules = load_custom_schedules(user_id)
+            remaining = [
+                schedule
+                for schedule in schedules
+                if str(schedule.get("id")) != schedule_id
+            ]
+            if len(remaining) == len(schedules):
+                await query.answer(text="Không tìm thấy lịch này.", show_alert=True)
+            else:
+                await asyncio.to_thread(save_custom_schedules, user_id, remaining)
+                await query.answer(text="Đã xóa lịch tự thêm.")
+            await send_or_edit_html(
+                update,
+                custom_schedule_text(user_id),
+                reply_markup=custom_schedule_keyboard(user_id),
+            )
+            return
 
         if data == "schedule:today":
             try:
@@ -1566,6 +1781,7 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 return
             
             day_rows = [r for r in rows if r.get("NgayBatDau", "")[:10] == today_str]
+            day_rows = merge_custom_schedules(day_rows, user_id, today_str, today_str)
             formatted = format_schedules_day(day_rows, "hôm nay")
             await send_or_edit_html(update, formatted, reply_markup=schedule_menu_keyboard())
             return
@@ -1584,6 +1800,9 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 return
             
             day_rows = [r for r in rows if r.get("NgayBatDau", "")[:10] == tomorrow_str]
+            day_rows = merge_custom_schedules(
+                day_rows, user_id, tomorrow_str, tomorrow_str
+            )
             formatted = format_schedules_day(day_rows, "ngày mai")
             await send_or_edit_html(update, formatted, reply_markup=schedule_menu_keyboard())
             return
@@ -1605,6 +1824,9 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 return
             
             week_rows = [r for r in rows if start_str <= r.get("NgayBatDau", "")[:10] <= end_str]
+            week_rows = merge_custom_schedules(
+                week_rows, user_id, start_str, end_str
+            )
             beauty_start = start_of_week.strftime("%d/%m")
             beauty_end = end_of_week.strftime("%d/%m")
             formatted = format_schedules_week(week_rows, beauty_start, beauty_end)
@@ -1628,6 +1850,9 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 return
 
             week_rows = [r for r in rows if start_str <= r.get("NgayBatDau", "")[:10] <= end_str]
+            week_rows = merge_custom_schedules(
+                week_rows, user_id, start_str, end_str
+            )
             beauty_start = start_of_next_week.strftime("%d/%m")
             beauty_end = end_of_next_week.strftime("%d/%m")
             formatted = format_schedules_week(
@@ -1829,6 +2054,49 @@ async def text_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     user_id = str(update.effective_user.id)
     text = (update.message.text or "").strip()
+
+    if get_custom_schedule_context(user_id):
+        if text.lower() in {"hủy", "huy", "cancel"}:
+            clear_custom_schedule_context(user_id)
+            await send_or_edit_html(
+                update,
+                custom_schedule_text(user_id),
+                reply_markup=custom_schedule_keyboard(user_id),
+            )
+            return
+
+        try:
+            schedule = parse_custom_schedule(text)
+        except ValueError as exc:
+            markup = ForceReply(
+                selective=True,
+                input_field_placeholder="Tên | thứ | tiết đầu | tiết cuối | phòng | từ ngày | đến ngày",
+            )
+            message = await update.message.reply_text(
+                f"Dữ liệu không hợp lệ: {exc}\n\n"
+                "Nhập lại theo mẫu:\n"
+                "Thực hành mạng | 4 | 7 | 9 | A203 | 01/07/2026 | 30/09/2026\n"
+                "Hoặc nhập “hủy” để dừng.",
+                reply_markup=markup,
+            )
+            set_custom_schedule_context(
+                user_id,
+                {"stage": "add", "prompt_message_id": message.message_id},
+            )
+            schedule_auto_delete(message, user_id)
+            return
+
+        schedules = await asyncio.to_thread(load_custom_schedules, user_id)
+        schedules.append(schedule)
+        await asyncio.to_thread(save_custom_schedules, user_id, schedules)
+        clear_custom_schedule_context(user_id)
+        await send_or_edit_html(
+            update,
+            "✅ Đã thêm lịch học lặp hằng tuần.\n\n"
+            + custom_schedule_text(user_id),
+            reply_markup=custom_schedule_keyboard(user_id),
+        )
+        return
 
     if get_setting_context(user_id):
         ctx = get_setting_context(user_id)

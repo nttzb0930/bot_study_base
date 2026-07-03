@@ -22,6 +22,7 @@ if MONGODB_URI:
 
 TOKEN_FILE = Path(os.getenv("TOKEN_FILE", "tokens.json"))
 SETTINGS_FILE = Path(os.getenv("SETTINGS_FILE", "user_settings.json"))
+CUSTOM_SCHEDULES_FILE = Path(os.getenv("CUSTOM_SCHEDULES_FILE", "custom_schedules.json"))
 
 def load_tokens() -> dict:
     if db is not None:
@@ -160,6 +161,54 @@ def save_user_settings(settings: dict) -> None:
 
     SETTINGS_FILE.write_text(
         json.dumps(settings, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def load_custom_schedules(telegram_user_id: str) -> list[dict]:
+    if db is not None:
+        try:
+            custom_schedules_col = db["custom_schedules"]
+            doc = custom_schedules_col.find_one(
+                {"telegram_user_id": str(telegram_user_id)}
+            )
+            return doc.get("schedules", []) if doc else []
+        except Exception as e:
+            print(f"MongoDB load_custom_schedules error: {e}. Falling back to file.")
+
+    if not CUSTOM_SCHEDULES_FILE.exists():
+        return []
+    try:
+        content = CUSTOM_SCHEDULES_FILE.read_text(encoding="utf-8").strip()
+        data = json.loads(content) if content else {}
+        return data.get(str(telegram_user_id), [])
+    except Exception:
+        return []
+
+
+def save_custom_schedules(telegram_user_id: str, schedules: list[dict]) -> None:
+    if db is not None:
+        try:
+            custom_schedules_col = db["custom_schedules"]
+            custom_schedules_col.update_one(
+                {"telegram_user_id": str(telegram_user_id)},
+                {"$set": {"schedules": schedules}},
+                upsert=True,
+            )
+            return
+        except Exception as e:
+            print(f"MongoDB save_custom_schedules error: {e}. Falling back to file.")
+
+    data = {}
+    if CUSTOM_SCHEDULES_FILE.exists():
+        try:
+            content = CUSTOM_SCHEDULES_FILE.read_text(encoding="utf-8").strip()
+            data = json.loads(content) if content else {}
+        except Exception:
+            data = {}
+    data[str(telegram_user_id)] = schedules
+    CUSTOM_SCHEDULES_FILE.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
