@@ -53,6 +53,8 @@ _API_CACHE = {
     "scores": {},       # student_id -> {"data": ..., "timestamp": ...}
     "gpa": {},          # student_id -> {"data": ..., "timestamp": ...}
     "profile": {},      # student_id -> {"data": ..., "timestamp": ...}
+    "schedules": {},    # student_id -> {"data": ..., "timestamp": ...}
+    "exams": {},        # student_id -> {"data": ..., "timestamp": ...}
 }
 
 
@@ -740,6 +742,10 @@ def get_schedules(telegram_user_id: str = "default") -> list[dict]:
     student_id = token_info["username"]
     encoded_student_id = quote(student_id)
 
+    cached = get_cached_data("schedules", student_id)
+    if cached is not None:
+        return cached
+
     url = (
         f"{API_BASE_URL}/SP_TC_SV_KetQuaHocTap_TiepNhan/"
         "EDU_Load_Para_MaSinhVien_LichHocSinhVien"
@@ -751,7 +757,9 @@ def get_schedules(telegram_user_id: str = "default") -> list[dict]:
         save_tokens(tokens)
 
         data = parse_json_response(response, "Lấy lịch học")
-        return data.get("body", [])
+        result = data.get("body", [])
+        set_cached_data("schedules", student_id, result)
+        return result
     except Exception as exc:
         is_auth = handle_token_failure(str(telegram_user_id), exc)
         if is_auth:
@@ -767,6 +775,10 @@ def get_exam_schedules(telegram_user_id: str = "default") -> list[dict]:
     student_id = token_info["username"]
     encoded_student_id = quote(student_id)
 
+    cached = get_cached_data("exams", student_id)
+    if cached is not None:
+        return cached
+
     url = (
         f"{API_BASE_URL}/SP_TC_SV_KetQuaHocTap_TiepNhan/"
         "EDU_Load_Para_MaSinhVien_LichThiSinhVien"
@@ -778,7 +790,9 @@ def get_exam_schedules(telegram_user_id: str = "default") -> list[dict]:
         save_tokens(tokens)
 
         data = parse_json_response(response, "Lấy lịch thi")
-        return data.get("body", [])
+        result = data.get("body", [])
+        set_cached_data("exams", student_id, result)
+        return result
     except Exception as exc:
         is_auth = handle_token_failure(str(telegram_user_id), exc)
         if is_auth:
