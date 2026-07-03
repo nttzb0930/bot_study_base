@@ -430,6 +430,7 @@ def schedule_menu_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton("📅 Lịch học hôm nay", callback_data="schedule:today")],
             [InlineKeyboardButton("🌅 Lịch học ngày mai", callback_data="schedule:tomorrow")],
             [InlineKeyboardButton("📅 Lịch học tuần này", callback_data="schedule:week")],
+            [InlineKeyboardButton("🗓️ Lịch học tuần sau", callback_data="schedule:next_week")],
             [InlineKeyboardButton("📝 Lịch thi sắp tới", callback_data="schedule:exams")],
             [InlineKeyboardButton("⬅️ Quay lại", callback_data="menu:main")],
         ]
@@ -459,14 +460,22 @@ def format_schedules_day(rows: list[dict], date_label: str) -> str:
     return "\n\n".join(lines)
 
 
-def format_schedules_week(rows: list[dict], start_date: str, end_date: str) -> str:
+def format_schedules_week(
+    rows: list[dict],
+    start_date: str,
+    end_date: str,
+    week_label: str = "tuần này",
+) -> str:
     if not rows:
-        return f"📅 <b>Lịch học tuần này ({start_date} -> {end_date}):</b>\nBạn không có lịch học nào trong tuần này! 🎉"
+        return (
+            f"📅 <b>Lịch học {week_label} ({start_date} -> {end_date}):</b>\n"
+            f"Bạn không có lịch học nào trong {week_label}! 🎉"
+        )
 
     # Sort rows by date, then TuTiet
     sorted_rows = sorted(rows, key=lambda r: (r.get("NgayBatDau", "")[:10], r.get("TuTiet") or 0))
 
-    lines = [f"📅 <b>LỊCH HỌC TUẦN NÀY ({start_date} -> {end_date})</b>", ""]
+    lines = [f"📅 <b>LỊCH HỌC {week_label.upper()} ({start_date} -> {end_date})</b>", ""]
     
     current_date = ""
     for row in sorted_rows:
@@ -1599,6 +1608,34 @@ async def callback_selection(update: Update, context: ContextTypes.DEFAULT_TYPE)
             beauty_start = start_of_week.strftime("%d/%m")
             beauty_end = end_of_week.strftime("%d/%m")
             formatted = format_schedules_week(week_rows, beauty_start, beauty_end)
+            await send_or_edit_html(update, formatted, reply_markup=schedule_menu_keyboard())
+            return
+
+        if data == "schedule:next_week":
+            start_of_next_week = now_vn + datetime.timedelta(days=7 - now_vn.weekday())
+            end_of_next_week = start_of_next_week + datetime.timedelta(days=6)
+            start_str = start_of_next_week.strftime("%Y-%m-%d")
+            end_str = end_of_next_week.strftime("%Y-%m-%d")
+            try:
+                await query.answer(text="Đang lấy lịch học tuần sau...")
+                rows = await asyncio.to_thread(get_schedules, user_id)
+            except KeyError:
+                await prompt_login_credentials(update, user_id)
+                return
+            except Exception as exc:
+                logger.exception("Get schedule next week failed")
+                await send_or_edit_text(update, f"Không lấy được lịch học: {exc}")
+                return
+
+            week_rows = [r for r in rows if start_str <= r.get("NgayBatDau", "")[:10] <= end_str]
+            beauty_start = start_of_next_week.strftime("%d/%m")
+            beauty_end = end_of_next_week.strftime("%d/%m")
+            formatted = format_schedules_week(
+                week_rows,
+                beauty_start,
+                beauty_end,
+                week_label="tuần sau",
+            )
             await send_or_edit_html(update, formatted, reply_markup=schedule_menu_keyboard())
             return
 

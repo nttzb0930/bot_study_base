@@ -11,12 +11,12 @@ import requests
 from dotenv import load_dotenv
 from requests import Response
 
+# Load configuration and initialize environment before importing local modules
+load_dotenv()
+
 # Local imports
 from db import TOKEN_FILE, load_tokens, save_tokens, delete_user_login
 from login import cryptojs_aes_encrypt
-
-# Load configuration and initialize environment
-load_dotenv()
 
 # System stdout configuration
 if hasattr(sys.stdout, "reconfigure"):
