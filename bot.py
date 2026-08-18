@@ -1072,13 +1072,13 @@ async def prompt_login_credentials(update: Update, user_id: str, error_msg: str 
         text = (
             f"❌ <b>Đăng nhập thất bại:</b> {error_msg}\n\n"
             "Vui lòng <b>reply tin nhắn này</b> theo dạng để thử lại:\n"
-            "<code><mssv> <password></code>"
+            "<code>&lt;mssv&gt; &lt;password&gt;</code>"
         )
     else:
         text = (
             "Phiên đăng nhập chưa có hoặc refresh token đã hết hạn.\n"
             "Reply tin nhắn này theo dạng:\n"
-            "<code><mssv> <password></code>"
+            "<code>&lt;mssv&gt; &lt;password&gt;</code>"
         )
     markup = ForceReply(
         selective=True,
