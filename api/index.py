@@ -31,7 +31,7 @@ if not bot_token:
 async def webhook_post_init(application) -> None:
     await application.bot.set_my_commands(
         [
-            BotCommand("start", "Hướng dẫn sử dụng"),
+            BotCommand("menu", "Menu chính điều khiển"),
             BotCommand("login", "Đăng nhập UNETI"),
             BotCommand("check", "Xem điểm"),
             BotCommand("gpa", "Xem GPA"),
@@ -45,6 +45,7 @@ async def webhook_post_init(application) -> None:
 telegram_app = ApplicationBuilder().token(bot_token).post_init(webhook_post_init).build()
 
 # Register handlers
+telegram_app.add_handler(CommandHandler("menu", start))
 telegram_app.add_handler(CommandHandler("start", start))
 telegram_app.add_handler(CommandHandler("login", login_command))
 telegram_app.add_handler(CommandHandler("logout", logout_command))
@@ -202,7 +203,7 @@ async def cron_check_scores(request: Request, secret: str = None):
                         msg_lines.append(f"📝 <b>Cập nhật môn: {sub}</b>")
                     for change in notif["changes"]:
                         msg_lines.append(f"  • {change}")
-                msg_lines.append("\n<i>Dùng /check để xem chi tiết điểm của bạn.</i>")
+                msg_lines.append("\n<i>Dùng /menu để mở menu điều khiển.</i>")
                 msg_text = "\n".join(msg_lines)
 
                 await telegram_app.bot.send_message(

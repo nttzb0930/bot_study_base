@@ -600,6 +600,62 @@ def parse_custom_schedule(text: str) -> dict:
     }
 
 
+UNETI_PERIOD_TIMES = {
+    1: ("07:00", "07:45"),
+    2: ("07:50", "08:35"),
+    3: ("08:40", "09:25"),
+    4: ("09:30", "10:15"),
+    5: ("10:20", "11:05"),
+    6: ("11:10", "11:55"),
+    7: ("12:30", "13:15"),
+    8: ("13:20", "14:05"),
+    9: ("14:10", "14:55"),
+    10: ("15:00", "15:45"),
+    11: ("15:50", "16:35"),
+    12: ("16:40", "17:25"),
+    13: ("17:30", "18:15"),
+    14: ("18:15", "19:00"),
+    15: ("19:00", "19:45"),
+    16: ("19:50", "20:35"),
+    17: ("20:35", "21:20"),
+}
+
+
+def format_period_and_time(tu_tiet, den_tiet, row: dict | None = None) -> str:
+    if row:
+        for bd_key in ["GioBatDau", "TuGio", "GioHocBatDau", "GioThi"]:
+            for kt_key in ["GioKetThuc", "DenGio", "GioHocKetThuc"]:
+                bd = row.get(bd_key)
+                kt = row.get(kt_key)
+                if bd and kt:
+                    return f"Tiết {tu_tiet}-{den_tiet} ({bd} - {kt})"
+
+    start_t, end_t = None, None
+    if isinstance(tu_tiet, str) and "-" in tu_tiet and not den_tiet:
+        parts = tu_tiet.split("-")
+        try:
+            start_t, end_t = int(parts[0]), int(parts[1])
+        except ValueError:
+            pass
+    else:
+        try:
+            start_t = int(tu_tiet) if tu_tiet is not None else None
+            end_t = int(den_tiet) if den_tiet is not None else None
+        except (ValueError, TypeError):
+            pass
+
+    if start_t and end_t and start_t in UNETI_PERIOD_TIMES and end_t in UNETI_PERIOD_TIMES:
+        start_time = UNETI_PERIOD_TIMES[start_t][0]
+        end_time = UNETI_PERIOD_TIMES[end_t][1]
+        return f"Tiết {start_t}-{end_t} ({start_time} - {end_time})"
+
+    if tu_tiet and den_tiet:
+        return f"Tiết {tu_tiet}-{den_tiet}"
+    if tu_tiet:
+        return f"Tiết {tu_tiet}"
+    return "Tiết -"
+
+
 def format_schedules_day(rows: list[dict], date_label: str) -> str:
     if not rows:
         return f"📅 <b>Lịch học {date_label}:</b>\nBạn không có lịch học vào ngày này! 🎉"
@@ -610,15 +666,17 @@ def format_schedules_day(rows: list[dict], date_label: str) -> str:
     lines = [f"📅 <b>LỊCH HỌC {date_label.upper()}</b>", ""]
     for idx, row in enumerate(sorted_rows, 1):
         mon = row.get("TenMonHoc", "Không rõ")
-        tiet = f"{row.get('TuTiet')}-{row.get('DenTiet')}"
-        phong = row.get("TenPhong", "-").strip()
-        phong = phong.replace("Phòng học/", "")
-        ca = row.get("CaHoc", "-")
-        gv = row.get("TenGiangVien", "-")
+        tu_tiet = row.get("TuTiet")
+        den_tiet = row.get("DenTiet")
+        time_str = format_period_and_time(tu_tiet, den_tiet, row)
+        phong = (row.get("TenPhong") or "-").strip().replace("Phòng học/", "")
+        ca = row.get("CaHoc") or ""
+        ca_suffix = f" [{ca}]" if ca and ca != "-" else ""
+        gv = row.get("TenGiangVien") or "-"
         lines.append(
             f"<b>{idx}. {mon}</b>\n"
-            f"- Tiết: {tiet} ({ca}) | Phòng: {phong}\n"
-            f"- GV: {gv}"
+            f"- Thời gian: <code>{time_str}</code>{ca_suffix}\n"
+            f"- Phòng: <code>{phong}</code> | GV: {gv}"
         )
     return "\n\n".join(lines)
 
@@ -655,13 +713,13 @@ def format_schedules_week(
             lines.append(f"\n📌 <b>{thu_str} ({beauty_date})</b>")
 
         mon = row.get("TenMonHoc", "Không rõ")
-        tiet = f"{row.get('TuTiet')}-{row.get('DenTiet')}"
-        phong = row.get("TenPhong", "-").strip()
-        phong = phong.replace("Phòng học/", "")
-        ca = row.get("CaHoc", "-")
+        tu_tiet = row.get("TuTiet")
+        den_tiet = row.get("DenTiet")
+        time_str = format_period_and_time(tu_tiet, den_tiet, row)
+        phong = (row.get("TenPhong") or "-").strip().replace("Phòng học/", "")
         lines.append(
             f"  • <b>{mon}</b>\n"
-            f"    Tiết {tiet} ({ca}) | Phòng: {phong}"
+            f"    <code>{time_str}</code> | Phòng: <code>{phong}</code>"
         )
     return "\n".join(lines)
 
@@ -702,15 +760,15 @@ def format_exam_schedule(rows: list[dict], today_str: str) -> str:
             thu_str = f"Thứ {thu}" if thu != 8 else "Chủ Nhật"
             ca = row.get("TC_SV_KetQuaHocTap_LichThiSinhVien_CaThi", "-")
             tiet = row.get("TC_SV_KetQuaHocTap_LichThiSinhVien_TuTietDenTiet", "-")
-            phong = row.get("TC_SV_KetQuaHocTap_LichThiSinhVien_TenPhong", "-").strip()
-            phong = phong.replace("Phòng học/", "")
+            time_str = format_period_and_time(tiet, None, row)
+            phong = row.get("TC_SV_KetQuaHocTap_LichThiSinhVien_TenPhong", "-").strip().replace("Phòng học/", "")
             loai = row.get("TC_SV_KetQuaHocTap_LichThiSinhVien_LoaiThi", "-")
             
             lines.append(
                 f"<b>{idx}. {mon}</b>\n"
                 f"- Ngày: {beauty_date} ({thu_str})\n"
-                f"- Ca: Tiết {tiet} ({ca}) | Phòng: {phong}\n"
-                f"- Hình thức: {loai}"
+                f"- Giờ thi: <code>{time_str}</code> (Ca: {ca})\n"
+                f"- Phòng: <code>{phong}</code> | Hình thức: {loai}"
             )
     else:
         lines.append("📝 <b>LỊCH THI SẮP TỚI</b>\nBạn không có lịch thi nào sắp tới! 🎉")
@@ -1008,27 +1066,38 @@ async def send_or_edit_html(update: Update, html_text: str, reply_markup=None) -
         schedule_auto_delete(message, user_id)
 
 
-async def prompt_login_credentials(update: Update, user_id: str) -> None:
+async def prompt_login_credentials(update: Update, user_id: str, error_msg: str | None = None) -> None:
     set_login_context(user_id)
-    text = (
-        "Phiên đăng nhập chưa có hoặc refresh token đã hết hạn.\n"
-        "Reply tin nhắn này theo dạng:\n"
-        "<mssv> <password>"
-    )
+    if error_msg:
+        text = (
+            f"❌ <b>Đăng nhập thất bại:</b> {error_msg}\n\n"
+            "Vui lòng <b>reply tin nhắn này</b> theo dạng để thử lại:\n"
+            "<code><mssv> <password></code>"
+        )
+    else:
+        text = (
+            "Phiên đăng nhập chưa có hoặc refresh token đã hết hạn.\n"
+            "Reply tin nhắn này theo dạng:\n"
+            "<code><mssv> <password></code>"
+        )
     markup = ForceReply(
         selective=True,
         input_field_placeholder="msv password",
     )
     if update.message:
-        message = await update.message.reply_text(text, reply_markup=markup)
+        message = await update.message.reply_text(text, parse_mode="HTML", reply_markup=markup)
         schedule_auto_delete(message, user_id)
     elif update.callback_query:
-        message = await update.callback_query.message.reply_text(text, reply_markup=markup)
+        message = await update.callback_query.message.reply_text(text, parse_mode="HTML", reply_markup=markup)
         schedule_auto_delete(message, user_id)
 
 
 async def perform_login(update: Update, username: str, password: str, telegram_user_id: str) -> None:
-    await send_long_message(update, "Đang login, đợi một chút...")
+    status_msg = None
+    if update.message:
+        status_msg = await update.message.reply_text("⏳ Đang đăng nhập, vui lòng đợi một chút...")
+        schedule_auto_delete(status_msg, telegram_user_id)
+
     try:
         token_data = await asyncio.to_thread(uneti_login, username, password)
         await asyncio.to_thread(save_login, username, token_data, telegram_user_id)
@@ -1049,11 +1118,31 @@ async def perform_login(update: Update, username: str, password: str, telegram_u
             logger.exception("Failed to fetch profile for full name caching during login")
     except Exception as exc:
         logger.exception("Login failed")
-        await send_long_message(update, f"Login thất bại: {exc}")
+        if status_msg:
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
+
+        exc_str = str(exc)
+        if "400 Client Error" in exc_str or "Bad Request" in exc_str:
+            friendly_err = "Sai tài khoản hoặc mật khẩu (hoặc tài khoản chưa được kích hoạt)."
+        elif "connection" in exc_str.lower() or "timeout" in exc_str.lower():
+            friendly_err = "Không thể kết nối đến máy chủ UNETI. Vui lòng thử lại sau."
+        else:
+            friendly_err = exc_str
+
+        await prompt_login_credentials(update, telegram_user_id, error_msg=friendly_err)
         return
 
+    if status_msg:
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+
     clear_login_context(telegram_user_id)
-    await send_long_message(update, "Login thành công. Dùng /check để xem danh sách môn.")
+    await send_long_message(update, "✅ Đăng nhập thành công! Dùng /menu để mở menu điều khiển.")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1111,10 +1200,10 @@ async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         status = None
 
     if status == "valid":
-        await send_long_message(update, "Bạn đã login rồi, token vẫn còn hạn. Dùng /check để xem điểm.")
+        await send_long_message(update, "Bạn đã login rồi, token vẫn còn hạn. Dùng /menu để mở menu điều khiển.")
         return
     if status == "refreshed":
-        await send_long_message(update, "Token đã hết hạn và đã được refresh. Dùng /check để xem điểm.")
+        await send_long_message(update, "Token đã hết hạn và đã được refresh. Dùng /menu để mở menu điều khiển.")
         return
 
     if len(context.args) < 2:
@@ -2178,7 +2267,11 @@ async def text_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if get_login_context(user_id):
         parts = text.split(maxsplit=1)
         if len(parts) < 2:
-            await prompt_login_credentials(update, user_id)
+            await prompt_login_credentials(
+                update,
+                user_id,
+                error_msg="Cú pháp không đúng. Vui lòng nhập cả MSSV và Mật khẩu cách nhau 1 khoảng trắng (Ví dụ: <code>23174800016 M@tKhau123</code>)."
+            )
             return
         await perform_login(update, parts[0], parts[1], user_id)
         return
@@ -2210,7 +2303,7 @@ async def start_health_check_server() -> None:
 async def post_init(application) -> None:
     await application.bot.set_my_commands(
         [
-            BotCommand("start", "Hướng dẫn sử dụng"),
+            BotCommand("menu", "Menu chính điều khiển"),
             BotCommand("login", "Đăng nhập UNETI"),
             BotCommand("info", "Thông tin cá nhân"),
             BotCommand("check", "Xem điểm"),
@@ -2231,6 +2324,7 @@ def main() -> None:
         raise RuntimeError("Missing environment variable: TELEGRAM_BOT_TOKEN")
 
     app = ApplicationBuilder().token(bot_token).post_init(post_init).build()
+    app.add_handler(CommandHandler("menu", start))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("login", login_command))
     app.add_handler(CommandHandler("logout", logout_command))

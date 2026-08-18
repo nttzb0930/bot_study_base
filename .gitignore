@@ -3,3 +3,5 @@ tokens.json
 user_settings.json
 __pycache__/
 *.pyc
+test_script
+scratch
