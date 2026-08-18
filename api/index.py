@@ -72,9 +72,13 @@ async def initialize_telegram():
             print(f"Error running webhook_post_init: {e}")
         is_initialized = True
 
-@app.post("/webhook")
+@app.api_route("/webhook", methods=["GET", "POST"])
+@app.api_route("/api/webhook", methods=["GET", "POST"])
+@app.api_route("/api/index/webhook", methods=["GET", "POST"])
 async def webhook(request: Request):
     await initialize_telegram()
+    if request.method == "GET":
+        return {"status": "ok", "message": "Webhook endpoint active"}
     try:
         data = await request.json()
         update = Update.de_json(data, telegram_app.bot)
@@ -83,12 +87,27 @@ async def webhook(request: Request):
         print(f"Webhook processing error: {e}")
     return Response(content="OK", status_code=200)
 
-@app.get("/")
-async def index():
+
+@app.api_route("/", methods=["GET", "HEAD", "POST"])
+@app.api_route("/api/index", methods=["GET", "HEAD", "POST"])
+@app.api_route("/api", methods=["GET", "HEAD", "POST"])
+async def index(request: Request):
+    await initialize_telegram()
+    if request.method == "POST":
+        try:
+            data = await request.json()
+            if isinstance(data, dict) and "update_id" in data:
+                update = Update.de_json(data, telegram_app.bot)
+                await telegram_app.process_update(update)
+                return Response(content="OK", status_code=200)
+        except Exception as e:
+            print(f"Index POST processing error: {e}")
     return {"status": "ok", "message": "Telegram Bot is running"}
 
 
-@app.api_route("/api/cron", methods=["GET", "HEAD"])
+@app.api_route("/api/cron", methods=["GET", "HEAD", "POST"])
+@app.api_route("/cron", methods=["GET", "HEAD", "POST"])
+@app.api_route("/api/index/cron", methods=["GET", "HEAD", "POST"])
 async def cron_check_scores(request: Request, secret: str = None):
     cron_secret = os.environ.get("CRON_SECRET")
     if cron_secret:
